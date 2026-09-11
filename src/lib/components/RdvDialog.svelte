@@ -3,9 +3,11 @@
 	import { clientsList, rdvCreate, rdvGet, rdvUpdate, tarifsList } from '$lib/api';
 	import type { Client, RdvCreateResult, Tarif } from '$lib/types';
 	import { localDatetimeToUtcIso, utcIsoToLocalDatetime } from '$lib/format';
+	import ClientCombobox from '$lib/components/ClientCombobox.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
+	import * as Select from '$lib/components/ui/select/index.js';
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
 
@@ -40,6 +42,12 @@
 	let overlapError = $state('');
 
 	const tarifsActifs = $derived(tarifs.filter((t) => t.actif));
+
+	const tarifLabel = $derived(
+		tarifId === ''
+			? 'Sans tarif'
+			: (tarifsActifs.find((t) => t.id === tarifId)?.nom ?? 'Sans tarif')
+	);
 
 	$effect(() => {
 		if (open) {
@@ -141,30 +149,33 @@
 		</Dialog.Header>
 		<div class="flex flex-col gap-4">
 			<div class="flex flex-col gap-2">
-				<Label for="rdv-client">Client</Label>
-				<select
-					id="rdv-client"
-					class="bg-input/20 dark:bg-input/30 border-input h-7 w-full rounded-md border px-2 text-sm"
-					bind:value={clientId}
-				>
-					{#each clients as client (client.id)}
-						<option value={client.id}>{client.nom}</option>
-					{/each}
-				</select>
+				<Label>Client</Label>
+				<ClientCombobox
+					{clients}
+					value={clientId}
+					onValueChange={(id) => (clientId = id)}
+				/>
 			</div>
 			<div class="flex flex-col gap-2">
-				<Label for="rdv-tarif">Tarif</Label>
-				<select
-					id="rdv-tarif"
-					class="bg-input/20 dark:bg-input/30 border-input h-7 w-full rounded-md border px-2 text-sm"
-					bind:value={tarifId}
-					onchange={onTarifChange}
+				<Label>Tarif</Label>
+				<Select.Root
+					type="single"
+					value={tarifId}
+					onValueChange={(v) => {
+						tarifId = v ?? '';
+						onTarifChange();
+					}}
 				>
-					<option value="">Sans tarif</option>
-					{#each tarifsActifs as tarif (tarif.id)}
-						<option value={tarif.id}>{tarif.nom}</option>
-					{/each}
-				</select>
+					<Select.Trigger class="w-full">
+						{tarifLabel}
+					</Select.Trigger>
+					<Select.Content>
+						<Select.Item value="" label="Sans tarif">Sans tarif</Select.Item>
+						{#each tarifsActifs as tarif (tarif.id)}
+							<Select.Item value={tarif.id} label={tarif.nom}>{tarif.nom}</Select.Item>
+						{/each}
+					</Select.Content>
+				</Select.Root>
 			</div>
 			<div class="flex flex-col gap-2">
 				<Label for="rdv-debut">Début</Label>
