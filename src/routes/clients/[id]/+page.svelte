@@ -30,22 +30,36 @@
 	let newNoteCorps = $state('');
 
 	$effect(() => {
-		load(clientId);
+		const id = clientId;
+		let cancelled = false;
+		(async () => {
+			await load(id, () => cancelled);
+		})();
+		return () => {
+			cancelled = true;
+		};
 	});
 
-	async function load(id: string) {
+	async function load(id: string, isCancelled: () => boolean = () => false) {
 		try {
-			client = await clientsGet(id);
-			nom = client.nom;
-			email = client.email ?? '';
-			telephone = client.telephone ?? '';
+			const c = await clientsGet(id);
+			if (isCancelled()) return;
+			client = c;
+			nom = c.nom;
+			email = c.email ?? '';
+			telephone = c.telephone ?? '';
 			newNoteCorps = '';
-			notes = await notesList({ client_id: id });
-			rdvs = await rdvList({ client_id: id });
+			const [n, r] = await Promise.all([
+				notesList({ client_id: id }),
+				rdvList({ client_id: id })
+			]);
+			if (isCancelled()) return;
+			notes = n;
+			rdvs = r;
 		} catch (e) {
-			toast.error(String(e));
+			if (!isCancelled()) toast.error(String(e));
 		} finally {
-			initial = false;
+			if (!isCancelled()) initial = false;
 		}
 	}
 

@@ -9,10 +9,11 @@
 	type Props = {
 		clients: Client[];
 		value: string;
+		loaded?: boolean;
 		onValueChange: (id: string) => void;
 	};
 
-	let { clients, value, onValueChange }: Props = $props();
+	let { clients, value, loaded = true, onValueChange }: Props = $props();
 
 	let open = $state(false);
 	let triggerRef = $state<HTMLButtonElement>(null!);
@@ -27,7 +28,9 @@
 	}
 </script>
 
-{#if clients.length === 0}
+{#if !loaded}
+	<Button variant="outline" class="w-full justify-between" disabled>Chargement…</Button>
+{:else if clients.length === 0}
 	<a href="/clients" class="text-primary text-sm underline-offset-4 hover:underline">Créer un client</a>
 {:else}
 	<Popover.Root bind:open>

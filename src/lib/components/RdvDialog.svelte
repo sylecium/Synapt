@@ -40,13 +40,14 @@
 	let note = $state('');
 	let saving = $state(false);
 	let overlapError = $state('');
+	let listsLoaded = $state(false);
 
+	const NONE = 'none';
 	const tarifsActifs = $derived(tarifs.filter((t) => t.actif));
-
+	const tarifCourant = $derived(tarifs.find((t) => t.id === tarifId));
+	const tarifSelectValue = $derived(tarifId === '' ? NONE : tarifId);
 	const tarifLabel = $derived(
-		tarifId === ''
-			? 'Sans tarif'
-			: (tarifsActifs.find((t) => t.id === tarifId)?.nom ?? 'Sans tarif')
+		tarifId === '' ? 'Sans tarif' : (tarifCourant?.nom ?? 'Sans tarif')
 	);
 
 	$effect(() => {
@@ -57,7 +58,9 @@
 
 	async function loadData() {
 		overlapError = '';
+		listsLoaded = false;
 		[clients, tarifs] = await Promise.all([clientsList(), tarifsList()]);
+		listsLoaded = true;
 
 		if (rdvId) {
 			const detail = await rdvGet(rdvId);
@@ -85,7 +88,7 @@
 	}
 
 	function onTarifChange() {
-		const tarif = tarifsActifs.find((t) => t.id === tarifId);
+		const tarif = tarifs.find((t) => t.id === tarifId);
 		if (tarif) dureeMinutes = String(tarif.duree_minutes);
 	}
 
@@ -153,6 +156,7 @@
 				<ClientCombobox
 					{clients}
 					value={clientId}
+					loaded={listsLoaded}
 					onValueChange={(id) => (clientId = id)}
 				/>
 			</div>
@@ -160,9 +164,9 @@
 				<Label>Tarif</Label>
 				<Select.Root
 					type="single"
-					value={tarifId}
+					value={tarifSelectValue}
 					onValueChange={(v) => {
-						tarifId = v ?? '';
+						tarifId = !v || v === NONE ? '' : v;
 						onTarifChange();
 					}}
 				>
@@ -170,7 +174,12 @@
 						{tarifLabel}
 					</Select.Trigger>
 					<Select.Content>
-						<Select.Item value="" label="Sans tarif">Sans tarif</Select.Item>
+						<Select.Item value={NONE} label="Sans tarif">Sans tarif</Select.Item>
+						{#if tarifCourant && !tarifCourant.actif}
+							<Select.Item value={tarifCourant.id} label={tarifCourant.nom}>
+								{tarifCourant.nom} (inactif)
+							</Select.Item>
+						{/if}
 						{#each tarifsActifs as tarif (tarif.id)}
 							<Select.Item value={tarif.id} label={tarif.nom}>{tarif.nom}</Select.Item>
 						{/each}

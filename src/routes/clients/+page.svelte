@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
 	import { clientsList, clientsUpsert } from '$lib/api';
 	import type { Client } from '$lib/types';
@@ -94,11 +93,12 @@
 			</Table.Header>
 			<Table.Body>
 				{#each filtered as client (client.id)}
-					<Table.Row
-						class="hover:bg-muted/50 cursor-pointer"
-						onclick={() => goto(`/clients/${client.id}`)}
-					>
-						<Table.Cell class="font-medium">{client.nom}</Table.Cell>
+					<Table.Row class="hover:bg-muted/50 relative">
+						<Table.Cell class="font-medium">
+							<a href="/clients/{client.id}" class="after:absolute after:inset-0">
+								{client.nom}
+							</a>
+						</Table.Cell>
 						<Table.Cell>{client.email ?? '—'}</Table.Cell>
 						<Table.Cell>{client.telephone ?? '—'}</Table.Cell>
 					</Table.Row>

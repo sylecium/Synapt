@@ -4,6 +4,7 @@
 	import CalendarIcon from '@lucide/svelte/icons/calendar';
 	import ChevronLeftIcon from '@lucide/svelte/icons/chevron-left';
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
+	import { toast } from 'svelte-sonner';
 	import { rdvList } from '$lib/api';
 	import type { Rdv, RdvCreateResult } from '$lib/types';
 	import {
@@ -66,9 +67,14 @@
 	}
 
 	async function loadRdvs() {
-		const { from, to } = weekBoundsUtc(weekStart);
-		rdvs = await rdvList({ from, to });
-		loading = false;
+		try {
+			const { from, to } = weekBoundsUtc(weekStart);
+			rdvs = await rdvList({ from, to });
+		} catch (e) {
+			toast.error(String(e));
+		} finally {
+			loading = false;
+		}
 	}
 
 	function goToday() {

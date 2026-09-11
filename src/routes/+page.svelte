@@ -21,7 +21,9 @@
 	let clientsCount = $state(0);
 	let tarifsCount = $state(0);
 
-	const needsSetup = $derived(clientsCount === 0 || tarifsCount === 0);
+	const needsSetup = $derived(
+		dashboard !== null && (clientsCount === 0 || tarifsCount === 0)
+	);
 
 	const showBanner = $derived(
 		settings !== null && (!settings.ntfy_topic || !settings.stripe_configured)
@@ -43,6 +45,8 @@
 			dashboard = d;
 			clientsCount = clients.length;
 			tarifsCount = tarifs.length;
+		} catch (e) {
+			toast.error(String(e));
 		} finally {
 			initial = false;
 		}
@@ -77,6 +81,8 @@
 		<Skeleton class="h-12" />
 		<Skeleton class="h-12" />
 		<Skeleton class="h-12" />
+	{:else if dashboard === null}
+		<p class="text-muted-foreground text-sm">Impossible de charger le tableau de bord.</p>
 	{:else}
 		{#if needsSetup}
 			<div class="rounded-md border bg-card px-4 py-3">
