@@ -17,7 +17,7 @@
 	let rdvDialogOpen = $state(false);
 	let panelOpen = $state(false);
 	let panelRdvId = $state<string | null>(null);
-	let loading = $state(true);
+	let initial = $state(true);
 	let clientsCount = $state(0);
 	let tarifsCount = $state(0);
 
@@ -32,18 +32,20 @@
 	});
 
 	async function reload() {
-		loading = true;
-		const [s, d, clients, tarifs] = await Promise.all([
-			settingsGet(),
-			rdvDashboard(),
-			clientsList(),
-			tarifsList()
-		]);
-		settings = s;
-		dashboard = d;
-		clientsCount = clients.length;
-		tarifsCount = tarifs.length;
-		loading = false;
+		try {
+			const [s, d, clients, tarifs] = await Promise.all([
+				settingsGet(),
+				rdvDashboard(),
+				clientsList(),
+				tarifsList()
+			]);
+			settings = s;
+			dashboard = d;
+			clientsCount = clients.length;
+			tarifsCount = tarifs.length;
+		} finally {
+			initial = false;
+		}
 	}
 
 	function openPanel(rdv: Rdv) {
@@ -71,7 +73,7 @@
 		<Button disabled={needsSetup} onclick={() => (rdvDialogOpen = true)}>Nouveau RDV</Button>
 	</PageHeader>
 
-	{#if loading}
+	{#if initial}
 		<Skeleton class="h-12" />
 		<Skeleton class="h-12" />
 		<Skeleton class="h-12" />
@@ -134,7 +136,6 @@
 								<span class="text-muted-foreground text-sm">{rdv.tarif_nom || '—'}</span>
 							</button>
 							<Button
-								variant="outline"
 								size="sm"
 								onclick={(e) => {
 									e.stopPropagation();
@@ -169,7 +170,9 @@
 								class="flex w-full items-center gap-x-4 px-4 py-3 text-left text-sm"
 								onclick={() => openPanel(rdv)}
 							>
-								<span class="text-muted-foreground w-36">{formatDateTime(rdv.debut)}</span>
+								<span class="text-muted-foreground w-36 font-mono tabular-nums">
+									{formatDateTime(rdv.debut)}
+								</span>
 								<span>{rdv.client_nom}</span>
 								<span class="text-muted-foreground">{rdv.tarif_nom || '—'}</span>
 							</button>
