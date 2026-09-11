@@ -72,6 +72,7 @@ pub fn db_path() -> Result<PathBuf, AppError> {
 }
 
 pub fn migrate(conn: &Connection) -> Result<(), AppError> {
+    conn.execute("PRAGMA foreign_keys = ON", [])?;
     conn.execute_batch(MIGRATION)?;
     Ok(())
 }

@@ -47,6 +47,12 @@ pub struct Note {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Dashboard {
+    pub aujourdhui: Vec<Rdv>,
+    pub a_venir: Vec<Rdv>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RappelNtfy {
     pub id: String,
     pub rdv_id: String,
