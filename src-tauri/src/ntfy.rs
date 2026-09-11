@@ -4,6 +4,61 @@ use serde::Serialize;
 use crate::error::AppError;
 use crate::settings::Settings;
 
+pub trait NtfyClient {
+    fn publish(&self, delay: DateTime<Utc>, kind: RappelKind) -> Result<String, AppError>;
+}
+
+pub struct ReqwestNtfy {
+    settings: Settings,
+    title: String,
+    message: String,
+    click: String,
+    priority: u8,
+}
+
+impl ReqwestNtfy {
+    pub fn for_rdv(
+        settings: &Settings,
+        client_nom: &str,
+        debut: DateTime<Utc>,
+        jitsi_url: &str,
+        kind: RappelKind,
+    ) -> Self {
+        let (title, message, priority) = match kind {
+            RappelKind::H24 => (
+                "Rappel RDV demain".to_string(),
+                format!("RDV avec {} le {}", client_nom, debut.format("%d/%m %H:%M")),
+                4,
+            ),
+            RappelKind::H1 => (
+                "Rappel RDV dans 1h".to_string(),
+                format!("RDV avec {} dans 1 heure", client_nom),
+                5,
+            ),
+        };
+        Self {
+            settings: settings.clone(),
+            title,
+            message,
+            click: jitsi_url.to_string(),
+            priority,
+        }
+    }
+}
+
+impl NtfyClient for ReqwestNtfy {
+    fn publish(&self, delay: DateTime<Utc>, _kind: RappelKind) -> Result<String, AppError> {
+        tauri::async_runtime::block_on(ntfy_publish(
+            &self.settings,
+            &self.title,
+            &self.message,
+            &self.click,
+            Some(delay),
+            self.priority,
+        ))
+    }
+}
+
 pub const NTFY_MAX: Duration = Duration::days(3);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
