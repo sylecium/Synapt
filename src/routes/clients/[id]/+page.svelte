@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { toast } from 'svelte-sonner';
 	import { clientsGet, clientsUpsert, notesList, notesUpsert, rdvList } from '$lib/api';
@@ -24,17 +23,18 @@
 	let rdvDialogOpen = $state(false);
 	let newNoteCorps = $state('');
 
-	onMount(() => {
-		load();
+	$effect(() => {
+		load(clientId);
 	});
 
-	async function load() {
-		client = await clientsGet(clientId);
+	async function load(id: string) {
+		client = await clientsGet(id);
 		nom = client.nom;
 		email = client.email ?? '';
 		telephone = client.telephone ?? '';
-		notes = await notesList({ client_id: clientId });
-		rdvs = await rdvList({ client_id: clientId });
+		newNoteCorps = '';
+		notes = await notesList({ client_id: id });
+		rdvs = await rdvList({ client_id: id });
 	}
 
 	async function saveClient() {
@@ -78,7 +78,7 @@
 
 	function onRdvSaved() {
 		rdvDialogOpen = false;
-		load();
+		load(clientId);
 	}
 </script>
 
