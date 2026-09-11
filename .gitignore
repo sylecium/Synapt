@@ -1,0 +1,12 @@
+node_modules/
+build/
+.svelte-kit/
+dist/
+src-tauri/target/
+bun.lockb
+.DS_Store
+*.log
+AGENTS.md
+.omc/
+.superpowers/
+.cursor/hooks/state/
