@@ -112,9 +112,6 @@
 					duree_minutes: Number.parseInt(dureeMinutes, 10),
 					note: note.trim() || null
 				});
-				for (const w of result.warnings) {
-					toast.warning(w);
-				}
 				onSaved(result);
 			}
 			open = false;

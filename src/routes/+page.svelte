@@ -42,7 +42,10 @@
 		}
 	}
 
-	function onRdvSaved(_result: RdvCreateResult) {
+	function onRdvSaved(result: RdvCreateResult) {
+		for (const w of result.warnings) {
+			toast.error(w);
+		}
 		rdvDialogOpen = false;
 		reload();
 	}
