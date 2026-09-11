@@ -2,16 +2,26 @@
 	import { onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { openUrl } from '@tauri-apps/plugin-opener';
-	import { writeText } from '@tauri-apps/plugin-clipboard-manager';
-	import { rdvDashboard, settingsGet } from '$lib/api';
+	import { clientsList, rdvDashboard, settingsGet, tarifsList } from '$lib/api';
 	import type { Dashboard, Rdv, RdvCreateResult, SettingsPublic } from '$lib/types';
 	import { formatDateTime, formatTime } from '$lib/format';
+	import EmptyState from '$lib/components/EmptyState.svelte';
+	import PageHeader from '$lib/components/PageHeader.svelte';
 	import RdvDialog from '$lib/components/RdvDialog.svelte';
+	import RdvPanel from '$lib/components/RdvPanel.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
 
 	let dashboard = $state<Dashboard | null>(null);
 	let settings = $state<SettingsPublic | null>(null);
 	let rdvDialogOpen = $state(false);
+	let panelOpen = $state(false);
+	let panelRdvId = $state<string | null>(null);
+	let loading = $state(true);
+	let clientsCount = $state(0);
+	let tarifsCount = $state(0);
+
+	const needsSetup = $derived(clientsCount === 0 || tarifsCount === 0);
 
 	const showBanner = $derived(
 		settings !== null && (!settings.ntfy_topic || !settings.stripe_configured)
@@ -22,16 +32,23 @@
 	});
 
 	async function reload() {
-		[settings, dashboard] = await Promise.all([settingsGet(), rdvDashboard()]);
+		loading = true;
+		const [s, d, clients, tarifs] = await Promise.all([
+			settingsGet(),
+			rdvDashboard(),
+			clientsList(),
+			tarifsList()
+		]);
+		settings = s;
+		dashboard = d;
+		clientsCount = clients.length;
+		tarifsCount = tarifs.length;
+		loading = false;
 	}
 
-	async function copyUrl(url: string, label: string) {
-		try {
-			await writeText(url);
-			toast.success(`${label} copié`);
-		} catch (e) {
-			toast.error(String(e));
-		}
+	function openPanel(rdv: Rdv) {
+		panelRdvId = rdv.id;
+		panelOpen = true;
 	}
 
 	async function openLink(url: string) {
@@ -48,84 +65,135 @@
 	}
 </script>
 
-<div class="flex flex-col gap-6 p-6">
-	<div class="flex items-center justify-between">
-		<h1 class="text-2xl font-semibold">Tableau de bord</h1>
-		<div class="flex gap-2">
-			<Button variant="outline" href="/agenda">Agenda</Button>
-			<Button onclick={() => (rdvDialogOpen = true)}>Nouveau RDV</Button>
-		</div>
-	</div>
+<div class="flex flex-col gap-4 p-4">
+	<PageHeader title="Tableau de bord">
+		<Button variant="outline" href="/agenda">Agenda</Button>
+		<Button disabled={needsSetup} onclick={() => (rdvDialogOpen = true)}>Nouveau RDV</Button>
+	</PageHeader>
 
-	{#if showBanner}
-		<div class="bg-muted rounded-md border px-4 py-3 text-sm">
-			Configuration incomplète (ntfy ou Stripe).
-			<a href="/reglages" class="text-primary underline">Réglages</a>
-		</div>
-	{/if}
+	{#if loading}
+		<Skeleton class="h-12" />
+		<Skeleton class="h-12" />
+		<Skeleton class="h-12" />
+	{:else}
+		{#if needsSetup}
+			<div class="rounded-md border bg-card px-4 py-3">
+				<div class="flex flex-col divide-y">
+					<div class="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0">
+						<span class="text-sm">1. Créer un tarif</span>
+						{#if tarifsCount > 0}
+							<span class="text-muted-foreground text-sm">Fait</span>
+						{:else}
+							<Button size="sm" href="/tarifs">Créer un tarif</Button>
+						{/if}
+					</div>
+					<div class="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0">
+						<span class="text-sm">2. Créer un client</span>
+						{#if clientsCount > 0}
+							<span class="text-muted-foreground text-sm">Fait</span>
+						{:else}
+							<Button size="sm" href="/clients">Créer un client</Button>
+						{/if}
+					</div>
+					<div class="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0">
+						<span class="text-sm">3. Créer un RDV</span>
+						<Button
+							size="sm"
+							disabled={clientsCount === 0 || tarifsCount === 0}
+							onclick={() => (rdvDialogOpen = true)}
+						>
+							Créer un RDV
+						</Button>
+					</div>
+				</div>
+			</div>
+		{/if}
 
-	<section class="flex flex-col gap-3">
-		<h2 class="text-sm font-medium">Aujourd'hui</h2>
-		{#if dashboard?.aujourdhui.length}
-			<ul class="flex flex-col gap-3">
-				{#each dashboard.aujourdhui as rdv (rdv.id)}
-					<li class="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border px-4 py-3">
-						<span class="w-14 font-medium tabular-nums">{formatTime(rdv.debut)}</span>
-						<a href="/clients/{rdv.client_id}" class="hover:underline">{rdv.client_nom}</a>
-						<span class="text-muted-foreground text-sm">{rdv.tarif_nom || '—'}</span>
-						<div class="ml-auto flex flex-wrap gap-2">
+		{#if showBanner}
+			<div class="bg-muted rounded-md border px-4 py-3 text-sm">
+				Configuration incomplète (ntfy ou Stripe).
+				<a href="/reglages" class="text-primary underline">Réglages</a>
+			</div>
+		{/if}
+
+		<section class="flex flex-col gap-3">
+			<h2 class="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+				Aujourd'hui
+			</h2>
+			{#if dashboard?.aujourdhui.length}
+				<ul class="divide-y rounded-md border">
+					{#each dashboard.aujourdhui as rdv (rdv.id)}
+						<li class="flex items-center gap-x-4 px-4 py-3">
+							<button
+								type="button"
+								class="flex min-w-0 flex-1 items-center gap-x-4 text-left"
+								onclick={() => openPanel(rdv)}
+							>
+								<span class="w-14 font-mono tabular-nums">{formatTime(rdv.debut)}</span>
+								<span>{rdv.client_nom}</span>
+								<span class="text-muted-foreground text-sm">{rdv.tarif_nom || '—'}</span>
+							</button>
 							<Button
 								variant="outline"
 								size="sm"
-								onclick={() => openLink(rdv.jitsi_url)}
+								onclick={(e) => {
+									e.stopPropagation();
+									openLink(rdv.jitsi_url);
+								}}
 							>
 								Jitsi
 							</Button>
-							<Button
-								variant="outline"
-								size="sm"
-								onclick={() => copyUrl(rdv.jitsi_url, 'Lien Jitsi')}
-							>
-								Copier Jitsi
-							</Button>
-							{#if rdv.stripe_url}
-								<Button
-									variant="outline"
-									size="sm"
-									onclick={() => openLink(rdv.stripe_url!)}
-								>
-									Stripe
-								</Button>
-							{/if}
-						</div>
-					</li>
-				{/each}
-			</ul>
-		{:else}
-			<p class="text-muted-foreground text-sm">Aucun RDV aujourd'hui.</p>
-		{/if}
-	</section>
+						</li>
+					{/each}
+				</ul>
+			{:else}
+				<EmptyState
+					title="Aucun RDV aujourd'hui"
+					description={needsSetup
+						? "Créez d'abord un tarif et un client."
+						: "Créer un rendez-vous pour aujourd'hui."}
+					actionLabel={needsSetup ? undefined : 'Nouveau RDV'}
+					onclick={needsSetup ? undefined : () => (rdvDialogOpen = true)}
+				/>
+			{/if}
+		</section>
 
-	<section class="flex flex-col gap-3">
-		<h2 class="text-sm font-medium">À venir</h2>
-		{#if dashboard?.a_venir.length}
-			<ul class="flex flex-col gap-2">
-				{#each dashboard.a_venir as rdv (rdv.id)}
-					<li class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-						<span class="text-muted-foreground w-36">{formatDateTime(rdv.debut)}</span>
-						<a href="/clients/{rdv.client_id}" class="hover:underline">{rdv.client_nom}</a>
-						<span class="text-muted-foreground">{rdv.tarif_nom || '—'}</span>
-					</li>
-				{/each}
-			</ul>
-		{:else}
-			<p class="text-muted-foreground text-sm">Aucun RDV à venir.</p>
-		{/if}
-	</section>
+		<section class="flex flex-col gap-3">
+			<h2 class="text-xs font-medium tracking-wide text-muted-foreground uppercase">À venir</h2>
+			{#if dashboard?.a_venir.length}
+				<ul class="divide-y rounded-md border">
+					{#each dashboard.a_venir as rdv (rdv.id)}
+						<li>
+							<button
+								type="button"
+								class="flex w-full items-center gap-x-4 px-4 py-3 text-left text-sm"
+								onclick={() => openPanel(rdv)}
+							>
+								<span class="text-muted-foreground w-36">{formatDateTime(rdv.debut)}</span>
+								<span>{rdv.client_nom}</span>
+								<span class="text-muted-foreground">{rdv.tarif_nom || '—'}</span>
+							</button>
+						</li>
+					{/each}
+				</ul>
+			{:else}
+				<p class="text-muted-foreground text-sm">Aucun RDV à venir.</p>
+			{/if}
+		</section>
+	{/if}
 </div>
 
 <RdvDialog
 	open={rdvDialogOpen}
 	onClose={() => (rdvDialogOpen = false)}
 	onSaved={onRdvSaved}
+/>
+
+<RdvPanel
+	bind:open={panelOpen}
+	rdvId={panelRdvId}
+	onClose={() => {
+		panelRdvId = null;
+	}}
+	onUpdated={reload}
 />
