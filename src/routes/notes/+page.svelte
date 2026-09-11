@@ -13,16 +13,15 @@
 	let notes = $state<Note[]>([]);
 	let newCorps = $state('');
 	let editingId = $state<string | null>(null);
-	let loading = $state(true);
+	let initial = $state(true);
 
 	onMount(load);
 
 	async function load() {
-		loading = true;
 		try {
 			notes = await notesList({ perso: true });
 		} finally {
-			loading = false;
+			initial = false;
 		}
 	}
 
@@ -76,7 +75,7 @@
 		<Button class="self-start" onclick={add}>Ajouter</Button>
 	</div>
 
-	{#if loading}
+	{#if initial}
 		<Skeleton class="h-32 max-w-2xl" />
 	{:else if notes.length === 0}
 		<EmptyState

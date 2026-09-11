@@ -94,7 +94,7 @@
 					bind:value={ntfyToken}
 					placeholder={secretPlaceholder(loaded.ntfy_token_configured, loaded.ntfy_token_last4)}
 				/>
-				<p class="text-muted-foreground text-xs">Optionnel, si le serveur ntfy l'exige.</p>
+				<p class="text-muted-foreground text-xs">Optionnel, si le serveur ntfy l’exige.</p>
 			</div>
 			<div class="flex items-center gap-2">
 				<Switch id="rappel-24h" bind:checked={rappel24h} />

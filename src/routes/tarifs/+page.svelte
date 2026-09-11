@@ -21,16 +21,15 @@
 	let dureeMinutes = $state('60');
 	let prixEuros = $state('50.00');
 	let saving = $state(false);
-	let loading = $state(true);
+	let initial = $state(true);
 
 	onMount(load);
 
 	async function load() {
-		loading = true;
 		try {
 			tarifs = await tarifsList();
 		} finally {
-			loading = false;
+			initial = false;
 		}
 	}
 
@@ -85,7 +84,7 @@
 		<Button onclick={openCreate}>Nouveau tarif</Button>
 	</PageHeader>
 
-	{#if loading}
+	{#if initial}
 		<Skeleton class="h-48" />
 	{:else if tarifs.length === 0}
 		<EmptyState

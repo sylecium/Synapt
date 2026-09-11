@@ -23,7 +23,7 @@
 	let notes = $state<Note[]>([]);
 	let rdvs = $state<Rdv[]>([]);
 	let saving = $state(false);
-	let loading = $state(true);
+	let initial = $state(true);
 	let rdvDialogOpen = $state(false);
 	let panelOpen = $state(false);
 	let panelRdvId = $state<string | null>(null);
@@ -34,7 +34,6 @@
 	});
 
 	async function load(id: string) {
-		loading = true;
 		try {
 			client = await clientsGet(id);
 			nom = client.nom;
@@ -46,7 +45,7 @@
 		} catch (e) {
 			toast.error(String(e));
 		} finally {
-			loading = false;
+			initial = false;
 		}
 	}
 
@@ -105,7 +104,7 @@
 		<Button onclick={() => (rdvDialogOpen = true)}>Nouveau RDV</Button>
 	</PageHeader>
 
-	{#if loading}
+	{#if initial}
 		<Skeleton class="h-48 max-w-lg" />
 		<Skeleton class="h-32" />
 		<Skeleton class="h-32" />

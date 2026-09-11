@@ -20,7 +20,7 @@
 	let email = $state('');
 	let telephone = $state('');
 	let saving = $state(false);
-	let loading = $state(true);
+	let initial = $state(true);
 
 	const filtered = $derived(
 		clients.filter((c) => c.nom.toLowerCase().includes(recherche.toLowerCase()))
@@ -29,11 +29,10 @@
 	onMount(load);
 
 	async function load() {
-		loading = true;
 		try {
 			clients = await clientsList();
 		} finally {
-			loading = false;
+			initial = false;
 		}
 	}
 
@@ -72,7 +71,7 @@
 		<Button onclick={openCreate}>Nouveau client</Button>
 	</PageHeader>
 
-	{#if loading}
+	{#if initial}
 		<Skeleton class="h-10 max-w-sm" />
 		<Skeleton class="h-48" />
 	{:else if clients.length === 0}
