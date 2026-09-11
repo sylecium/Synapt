@@ -681,8 +681,26 @@ pub fn rdv_annuler(conn: &Connection, id: &str) -> Result<Rdv, AppError> {
     fetch_rdv(conn, id)
 }
 
-pub fn rdv_list(conn: &Connection, from: &str, to: &str) -> Result<Vec<Rdv>, AppError> {
+pub fn rdv_list(
+    conn: &Connection,
+    from: Option<&str>,
+    to: Option<&str>,
+    client_id: Option<&str>,
+) -> Result<Vec<Rdv>, AppError> {
     ensure_migrated(conn)?;
+    if let Some(cid) = client_id {
+        let sql = format!(
+            "{RDV_SELECT} WHERE rdv.client_id = ?1 AND rdv.statut = 'planifie' ORDER BY rdv.debut"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rdvs = stmt
+            .query_map(params![cid], row_to_rdv)?
+            .collect::<Result<Vec<_>, _>>()?;
+        return Ok(rdvs);
+    }
+
+    let from = from.ok_or_else(|| AppError::new("from requis"))?;
+    let to = to.ok_or_else(|| AppError::new("to requis"))?;
     let sql = format!(
         "{RDV_SELECT} WHERE rdv.debut >= ?1 AND rdv.debut < ?2 AND rdv.statut = 'planifie' ORDER BY rdv.debut"
     );
@@ -696,7 +714,12 @@ pub fn rdv_list(conn: &Connection, from: &str, to: &str) -> Result<Vec<Rdv>, App
 pub fn rdv_dashboard(conn: &Connection, now: DateTime<Utc>) -> Result<Dashboard, AppError> {
     ensure_migrated(conn)?;
     let (day_start, day_end) = local_day_bounds(now);
-    let aujourdhui = rdv_list(conn, &day_start.to_rfc3339(), &day_end.to_rfc3339())?;
+    let aujourdhui = rdv_list(
+        conn,
+        Some(&day_start.to_rfc3339()),
+        Some(&day_end.to_rfc3339()),
+        None,
+    )?;
 
     let sql = format!(
         "{RDV_SELECT} WHERE rdv.debut >= ?1 AND rdv.statut = 'planifie' ORDER BY rdv.debut LIMIT 5"
@@ -820,8 +843,20 @@ pub fn notes_delete(id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn rdv_list(from: String, to: String) -> Result<Vec<Rdv>, String> {
-    with_db(|conn| repo::rdv_list(conn, &from, &to)).map_err(|e| e.message)
+pub fn rdv_list(
+    from: Option<String>,
+    to: Option<String>,
+    client_id: Option<String>,
+) -> Result<Vec<Rdv>, String> {
+    with_db(|conn| {
+        repo::rdv_list(
+            conn,
+            from.as_deref(),
+            to.as_deref(),
+            client_id.as_deref(),
+        )
+    })
+    .map_err(|e| e.message)
 }
 
 #[tauri::command]
@@ -1097,10 +1132,47 @@ mod tests {
         assert_eq!(got.client_nom, "Alice");
         assert_eq!(got.tarif_nom, "Consultation");
 
-        let list = rdv_list(&conn, "2026-09-01T00:00:00Z", "2026-09-12T00:00:00Z").unwrap();
+        let list = rdv_list(
+            &conn,
+            Some("2026-09-01T00:00:00Z"),
+            Some("2026-09-12T00:00:00Z"),
+            None,
+        )
+        .unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].client_nom, "Alice");
         assert_eq!(list[0].tarif_nom, "Consultation");
+    }
+
+    #[test]
+    fn rdv_list_filtre_par_client_id() {
+        let conn = crate::db::open_memory().unwrap();
+        let alice = seed_client(&conn);
+        let bob = clients_upsert(&conn, None, "Bob", None, None).unwrap();
+        let tarif = seed_tarif(&conn);
+        rdv_create(
+            &conn,
+            &alice.id,
+            Some(tarif.id.clone()),
+            "2026-09-11T10:00:00Z",
+            60,
+            None,
+        )
+        .unwrap();
+        rdv_create(
+            &conn,
+            &bob.id,
+            Some(tarif.id),
+            "2026-09-12T10:00:00Z",
+            60,
+            None,
+        )
+        .unwrap();
+
+        let list = rdv_list(&conn, None, None, Some(&alice.id)).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].client_id, alice.id);
+        assert_eq!(list[0].client_nom, "Alice");
     }
 
     #[test]

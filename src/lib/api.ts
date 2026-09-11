@@ -49,8 +49,12 @@ export const notesUpsert = (p: { id?: string; client_id?: string | null; corps: 
 
 export const notesDelete = (id: string) => invoke<void>('notes_delete', { id });
 
-export const rdvList = (from: string, to: string) =>
-	invoke<Rdv[]>('rdv_list', { from, to });
+export const rdvList = (p: { from?: string; to?: string; client_id?: string }) =>
+	invoke<Rdv[]>('rdv_list', {
+		from: p.from ?? null,
+		to: p.to ?? null,
+		client_id: p.client_id ?? null
+	});
 
 export const rdvGet = (id: string) => invoke<Rdv>('rdv_get', { id });
 
