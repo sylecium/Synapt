@@ -32,6 +32,10 @@
 
 	const gridHeight = $derived(slots.length * SLOT_HEIGHT);
 
+	function isToday(day: Date): boolean {
+		return sameLocalDay(day, new Date());
+	}
+
 	function rdvsForDay(day: Date): Rdv[] {
 		return rdvs.filter((r) => sameLocalDay(new Date(r.debut), day));
 	}
@@ -75,7 +79,7 @@
 			<div class="h-8"></div>
 			{#each slots as slot (slot.hour + ':' + slot.minute)}
 				<div
-					class="text-muted-foreground pr-2 text-right text-xs leading-8"
+					class="text-muted-foreground pr-2 text-right font-mono text-xs tabular-nums leading-8"
 					style="height:{SLOT_HEIGHT}px"
 				>
 					{timeLabel(slot.hour, slot.minute)}
@@ -88,8 +92,15 @@
 			style="grid-template-columns: repeat({columns.length}, minmax(0, 1fr))"
 		>
 			{#each columns as day (day.toISOString())}
-				<div class="border-l">
-					<div class="h-8 border-b px-2 text-center text-xs font-medium">{dayLabel(day)}</div>
+				{@const today = isToday(day)}
+				<div class="border-l {today ? 'bg-primary/8' : ''}">
+					<div
+						class="h-8 border-b px-2 text-center text-xs font-medium {today
+							? 'border-b-2 border-primary'
+							: ''}"
+					>
+						{dayLabel(day)}
+					</div>
 					<div class="relative" style="height:{gridHeight}px">
 						{#each slots as slot, slotIndex (day.toISOString() + slotIndex)}
 							<button
@@ -103,7 +114,7 @@
 						{#each rdvsForDay(day).filter(rdvInGrid) as rdv (rdv.id)}
 							<button
 								type="button"
-								class="bg-primary/15 border-primary/40 hover:bg-primary/25 absolute inset-x-0.5 z-10 overflow-hidden rounded border px-1 py-0.5 text-left text-xs"
+								class="bg-primary text-primary-foreground absolute inset-x-0.5 z-10 overflow-hidden rounded-[0.4rem] px-1 py-0.5 text-left text-xs hover:opacity-90"
 								style={rdvStyle(rdv)}
 								onclick={(e) => {
 									e.stopPropagation();
@@ -111,6 +122,7 @@
 								}}
 							>
 								<span class="font-medium">{rdv.client_nom}</span>
+								<span class="font-mono tabular-nums opacity-80">{formatTime(rdv.debut)}</span>
 							</button>
 						{/each}
 					</div>
@@ -120,11 +132,11 @@
 							{#each rdvsOutsideForDay(day) as rdv (rdv.id)}
 								<button
 									type="button"
-									class="bg-muted hover:bg-muted/80 rounded border px-2 py-1 text-left text-xs"
+									class="bg-warn-bg text-warn hover:opacity-90 rounded px-2 py-1 text-left text-xs"
 									onclick={() => onRdv(rdv)}
 								>
 									<span class="font-medium">{rdv.client_nom}</span>
-									<span class="text-muted-foreground ml-1">{formatTime(rdv.debut)}</span>
+									<span class="ml-1 font-mono tabular-nums">{formatTime(rdv.debut)}</span>
 								</button>
 							{/each}
 						</div>

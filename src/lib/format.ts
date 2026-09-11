@@ -17,6 +17,21 @@ export function addDays(d: Date, n: number): Date {
 	return date;
 }
 
+export function formatWeekLabel(startMonday: Date): string {
+	const end = addDays(startMonday, 6);
+	const dayFmt = new Intl.DateTimeFormat('fr-FR', { day: 'numeric' });
+	const endFmt = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short' });
+	return `${dayFmt.format(startMonday)}–${endFmt.format(end)}`;
+}
+
+export function formatDayLabel(d: Date): string {
+	return new Intl.DateTimeFormat('fr-FR', {
+		weekday: 'short',
+		day: 'numeric',
+		month: 'short'
+	}).format(d);
+}
+
 export function sameLocalDay(a: Date, b: Date): boolean {
 	return (
 		a.getFullYear() === b.getFullYear() &&
