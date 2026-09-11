@@ -34,6 +34,15 @@ pub fn jitsi_url(id: &str) -> String {
     format!("https://meet.jit.si/synapt-{id}")
 }
 
+const RDV_SELECT: &str = "\
+SELECT rdv.id, rdv.client_id, rdv.tarif_id, rdv.debut, rdv.duree_minutes, \
+rdv.jitsi_url, rdv.stripe_url, rdv.stripe_id, rdv.note, rdv.statut, \
+rdv.created_at, rdv.updated_at, clients.nom AS client_nom, \
+COALESCE(tarifs.nom, '') AS tarif_nom \
+FROM rdv \
+JOIN clients ON clients.id = rdv.client_id \
+LEFT JOIN tarifs ON tarifs.id = rdv.tarif_id";
+
 fn now_iso() -> String {
     Utc::now().to_rfc3339()
 }
@@ -89,6 +98,8 @@ fn row_to_rdv(row: &Row<'_>) -> Result<Rdv, rusqlite::Error> {
         statut: row.get("statut")?,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
+        client_nom: row.get("client_nom")?,
+        tarif_nom: row.get("tarif_nom")?,
     })
 }
 
@@ -103,9 +114,8 @@ fn row_to_note(row: &Row<'_>) -> Result<Note, rusqlite::Error> {
 }
 
 fn fetch_rdv(conn: &Connection, id: &str) -> Result<Rdv, AppError> {
-    let mut stmt = conn.prepare(
-        "SELECT id, client_id, tarif_id, debut, duree_minutes, jitsi_url, stripe_url, stripe_id, note, statut, created_at, updated_at FROM rdv WHERE id = ?1",
-    )?;
+    let sql = format!("{RDV_SELECT} WHERE rdv.id = ?1");
+    let mut stmt = conn.prepare(&sql)?;
     let rdv = stmt.query_row(params![id], row_to_rdv)?;
     Ok(rdv)
 }
@@ -170,9 +180,8 @@ pub fn ntfy_sync<C: NtfyClient>(
 ) -> Result<Vec<String>, AppError> {
     ensure_migrated(conn)?;
     let mut warnings = Vec::new();
-    let mut stmt = conn.prepare(
-        "SELECT id, client_id, tarif_id, debut, duree_minutes, jitsi_url, stripe_url, stripe_id, note, statut, created_at, updated_at FROM rdv WHERE statut = 'planifie'",
-    )?;
+    let sql = format!("{RDV_SELECT} WHERE rdv.statut = 'planifie'");
+    let mut stmt = conn.prepare(&sql)?;
     let rdvs = stmt
         .query_map([], row_to_rdv)?
         .collect::<Result<Vec<_>, _>>()?;
@@ -674,9 +683,10 @@ pub fn rdv_annuler(conn: &Connection, id: &str) -> Result<Rdv, AppError> {
 
 pub fn rdv_list(conn: &Connection, from: &str, to: &str) -> Result<Vec<Rdv>, AppError> {
     ensure_migrated(conn)?;
-    let mut stmt = conn.prepare(
-        "SELECT id, client_id, tarif_id, debut, duree_minutes, jitsi_url, stripe_url, stripe_id, note, statut, created_at, updated_at FROM rdv WHERE debut >= ?1 AND debut < ?2 AND statut = 'planifie' ORDER BY debut",
-    )?;
+    let sql = format!(
+        "{RDV_SELECT} WHERE rdv.debut >= ?1 AND rdv.debut < ?2 AND rdv.statut = 'planifie' ORDER BY rdv.debut"
+    );
+    let mut stmt = conn.prepare(&sql)?;
     let rdvs = stmt
         .query_map(params![from, to], row_to_rdv)?
         .collect::<Result<Vec<_>, _>>()?;
@@ -688,9 +698,10 @@ pub fn rdv_dashboard(conn: &Connection, now: DateTime<Utc>) -> Result<Dashboard,
     let (day_start, day_end) = local_day_bounds(now);
     let aujourdhui = rdv_list(conn, &day_start.to_rfc3339(), &day_end.to_rfc3339())?;
 
-    let mut stmt = conn.prepare(
-        "SELECT id, client_id, tarif_id, debut, duree_minutes, jitsi_url, stripe_url, stripe_id, note, statut, created_at, updated_at FROM rdv WHERE debut >= ?1 AND statut = 'planifie' ORDER BY debut LIMIT 5",
-    )?;
+    let sql = format!(
+        "{RDV_SELECT} WHERE rdv.debut >= ?1 AND rdv.statut = 'planifie' ORDER BY rdv.debut LIMIT 5"
+    );
+    let mut stmt = conn.prepare(&sql)?;
     let a_venir = stmt
         .query_map(params![day_end.to_rfc3339()], row_to_rdv)?
         .collect::<Result<Vec<_>, _>>()?;
@@ -1064,6 +1075,49 @@ mod tests {
         .unwrap();
         assert!(rdv.jitsi_url.starts_with("https://meet.jit.si/synapt-"));
         assert_eq!(rdv.statut, "planifie");
+        assert_eq!(rdv.client_nom, "Alice");
+        assert_eq!(rdv.tarif_nom, "Consultation");
+    }
+
+    #[test]
+    fn rdv_list_et_get_incluent_noms_joints() {
+        let conn = crate::db::open_memory().unwrap();
+        let client = seed_client(&conn);
+        let tarif = seed_tarif(&conn);
+        let rdv = rdv_create(
+            &conn,
+            &client.id,
+            Some(tarif.id.clone()),
+            "2026-09-11T10:00:00Z",
+            60,
+            None,
+        )
+        .unwrap();
+        let got = rdv_get(&conn, &rdv.id).unwrap();
+        assert_eq!(got.client_nom, "Alice");
+        assert_eq!(got.tarif_nom, "Consultation");
+
+        let list = rdv_list(&conn, "2026-09-01T00:00:00Z", "2026-09-12T00:00:00Z").unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].client_nom, "Alice");
+        assert_eq!(list[0].tarif_nom, "Consultation");
+    }
+
+    #[test]
+    fn rdv_sans_tarif_a_tarif_nom_vide() {
+        let conn = crate::db::open_memory().unwrap();
+        let client = seed_client(&conn);
+        let rdv = rdv_create(
+            &conn,
+            &client.id,
+            None,
+            "2026-09-11T10:00:00Z",
+            60,
+            None,
+        )
+        .unwrap();
+        assert_eq!(rdv.client_nom, "Alice");
+        assert_eq!(rdv.tarif_nom, "");
     }
 
     #[test]

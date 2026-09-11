@@ -35,6 +35,8 @@ pub struct Rdv {
     pub statut: String,
     pub created_at: String,
     pub updated_at: String,
+    pub client_nom: String,
+    pub tarif_nom: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
