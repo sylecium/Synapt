@@ -70,6 +70,14 @@ export function formatDateTime(iso: string): string {
 	);
 }
 
+export function formatNoteListDate(iso: string): string {
+	const d = new Date(iso);
+	if (sameLocalDay(d, new Date())) {
+		return formatTime(iso);
+	}
+	return new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short' }).format(d);
+}
+
 export function utcIsoToLocalDatetime(iso: string): string {
 	const d = new Date(iso);
 	const pad = (n: number) => String(n).padStart(2, '0');
