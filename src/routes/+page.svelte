@@ -5,7 +5,7 @@
 	import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 	import { rdvDashboard, settingsGet } from '$lib/api';
 	import type { Dashboard, Rdv, RdvCreateResult, SettingsPublic } from '$lib/types';
-	import { formatTime } from '$lib/format';
+	import { formatDateTime, formatTime } from '$lib/format';
 	import RdvDialog from '$lib/components/RdvDialog.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 
@@ -112,7 +112,7 @@
 			<ul class="flex flex-col gap-2">
 				{#each dashboard.a_venir as rdv (rdv.id)}
 					<li class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-						<span class="text-muted-foreground w-36">{formatTime(rdv.debut)}</span>
+						<span class="text-muted-foreground w-36">{formatDateTime(rdv.debut)}</span>
 						<a href="/clients/{rdv.client_id}" class="hover:underline">{rdv.client_nom}</a>
 						<span class="text-muted-foreground">{rdv.tarif_nom || '—'}</span>
 					</li>

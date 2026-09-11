@@ -95,7 +95,7 @@
 		saving = true;
 		try {
 			if (isEdit && rdvId) {
-				const rdv = await rdvUpdate({
+				const result = await rdvUpdate({
 					id: rdvId,
 					client_id: clientId,
 					tarif_id: tarifId || null,
@@ -103,7 +103,10 @@
 					duree_minutes: Number.parseInt(dureeMinutes, 10),
 					note: note.trim() || null
 				});
-				onSaved({ rdv, warnings: [] });
+				for (const w of result.warnings) {
+					toast.error(w);
+				}
+				onSaved(result);
 			} else {
 				const result = await rdvCreate({
 					client_id: clientId,

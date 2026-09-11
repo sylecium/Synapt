@@ -1,4 +1,15 @@
+use std::time::Duration;
+
 use crate::error::AppError;
+
+const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
+
+fn http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(HTTP_TIMEOUT)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
 
 fn form_pct_encode(s: &str) -> String {
     let mut out = String::new();
@@ -29,7 +40,7 @@ pub async fn stripe_create_payment_link(
         form_pct_encode(nom),
     );
 
-    let client = reqwest::Client::new();
+    let client = http_client();
     let resp = client
         .post("https://api.stripe.com/v1/payment_links")
         .basic_auth(secret, Some(""))

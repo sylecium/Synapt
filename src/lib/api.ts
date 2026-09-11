@@ -74,9 +74,9 @@ export const rdvUpdate = (p: {
 	debut: string;
 	duree_minutes: number;
 	note: string | null;
-}) => invoke<Rdv>('rdv_update', p);
+}) => invoke<RdvCreateResult>('rdv_update', p);
 
-export const rdvAnnuler = (id: string) => invoke<Rdv>('rdv_annuler', { id });
+export const rdvAnnuler = (id: string) => invoke<RdvCreateResult>('rdv_annuler', { id });
 
 export const rdvDashboard = () => invoke<Dashboard>('rdv_dashboard');
 

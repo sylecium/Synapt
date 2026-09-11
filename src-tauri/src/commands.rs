@@ -7,8 +7,7 @@ use crate::db::{db_path, migrate, open_file};
 use crate::error::AppError;
 use crate::models::{Client, Dashboard, Note, RappelNtfy, Rdv, RdvDetail, Tarif};
 use crate::ntfy::{
-    echeance, ntfy_delete, should_publish, BlockingReqwestNtfy, NtfyClient, RappelKind,
-    ReqwestNtfy,
+    echeance, ntfy_delete, should_publish, NtfyClient, RappelKind, ReqwestNtfy,
 };
 use crate::overlap::overlaps;
 use crate::settings::{load_settings, save_settings, Settings, SettingsPublic};
@@ -155,7 +154,10 @@ fn insert_rappel(
 ) -> Result<(), AppError> {
     let id = Uuid::new_v4().to_string();
     conn.execute(
-        "INSERT INTO rappels_ntfy (id, rdv_id, type, ntfy_id, echeance, etat) VALUES (?1, ?2, ?3, ?4, ?5, 'programme')",
+        "INSERT INTO rappels_ntfy (id, rdv_id, type, ntfy_id, echeance, etat) \
+         VALUES (?1, ?2, ?3, ?4, ?5, 'programme') \
+         ON CONFLICT(rdv_id, type) DO UPDATE SET \
+         etat = 'programme', ntfy_id = excluded.ntfy_id, echeance = excluded.echeance",
         params![id, rdv_id, kind.as_str(), ntfy_id, echeance_at.to_rfc3339()],
     )?;
     Ok(())
@@ -710,9 +712,7 @@ pub fn rdv_list(
 ) -> Result<Vec<Rdv>, AppError> {
     ensure_migrated(conn)?;
     if let Some(cid) = client_id {
-        let sql = format!(
-            "{RDV_SELECT} WHERE rdv.client_id = ?1 AND rdv.statut = 'planifie' ORDER BY rdv.debut"
-        );
+        let sql = format!("{RDV_SELECT} WHERE rdv.client_id = ?1 ORDER BY rdv.debut");
         let mut stmt = conn.prepare(&sql)?;
         let rdvs = stmt
             .query_map(params![cid], row_to_rdv)?
@@ -945,7 +945,7 @@ pub async fn rdv_update(
     debut: String,
     duree_minutes: i64,
     note: Option<String>,
-) -> Result<Rdv, String> {
+) -> Result<RdvCreateResult, String> {
     let settings = load_settings();
     let now = Utc::now();
 
@@ -965,25 +965,21 @@ pub async fn rdv_update(
     })
     .map_err(|e| e.message)?;
 
+    let mut warnings = Vec::new();
     if debut_changed {
-        for w in cancel_rappels_ntfy(&settings, &id).await {
-            eprintln!("rdv_update ntfy cancel: {}", w);
-        }
-        for w in ntfy_schedule_rdv(&settings, &rdv, now).await {
-            eprintln!("rdv_update ntfy schedule: {}", w);
-        }
+        warnings.extend(cancel_rappels_ntfy(&settings, &id).await);
+        warnings.extend(ntfy_schedule_rdv(&settings, &rdv, now).await);
     }
 
-    Ok(rdv)
+    Ok(RdvCreateResult { rdv, warnings })
 }
 
 #[tauri::command]
-pub async fn rdv_annuler(id: String) -> Result<Rdv, String> {
+pub async fn rdv_annuler(id: String) -> Result<RdvCreateResult, String> {
     let settings = load_settings();
-    for w in cancel_rappels_ntfy(&settings, &id).await {
-        eprintln!("rdv_annuler ntfy: {}", w);
-    }
-    with_db(|conn| repo::rdv_annuler(conn, &id)).map_err(|e| e.message)
+    let warnings = cancel_rappels_ntfy(&settings, &id).await;
+    let rdv = with_db(|conn| repo::rdv_annuler(conn, &id)).map_err(|e| e.message)?;
+    Ok(RdvCreateResult { rdv, warnings })
 }
 
 #[tauri::command]
@@ -1027,34 +1023,31 @@ pub async fn ntfy_test() -> Result<(), String> {
 }
 
 pub fn run_ntfy_sync() {
-    let settings = load_settings();
-    let now = Utc::now();
-    if let Ok(path) = db_path() {
-        if let Ok(conn) = open_file(&path) {
-            if let Err(e) = migrate(&conn) {
-                eprintln!("ntfy_sync migrate: {}", e.message);
+    tauri::async_runtime::spawn(async {
+        let settings = load_settings();
+        let now = Utc::now();
+        let rdvs = match with_db(|conn| {
+            ensure_migrated(conn)?;
+            let sql = format!("{RDV_SELECT} WHERE rdv.statut = 'planifie'");
+            let mut stmt = conn.prepare(&sql)?;
+            let rdvs = stmt
+                .query_map([], row_to_rdv)?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rdvs)
+        }) {
+            Ok(rdvs) => rdvs,
+            Err(e) => {
+                eprintln!("ntfy_sync: {}", e.message);
                 return;
             }
-            let result = ntfy_sync(&conn, &settings, now, |rdv, kind| {
-                let client_nom = fetch_client_nom(&conn, &rdv.client_id).unwrap_or_default();
-                let debut_dt = rdv.debut.parse().unwrap_or(now);
-                BlockingReqwestNtfy(ReqwestNtfy::for_rdv(
-                    &settings,
-                    &client_nom,
-                    debut_dt,
-                    &rdv.jitsi_url,
-                    kind,
-                ))
-            });
-            if let Ok(warnings) = result {
-                for w in warnings {
-                    eprintln!("ntfy_sync: {}", w);
-                }
-            } else if let Err(e) = result {
-                eprintln!("ntfy_sync: {}", e.message);
+        };
+
+        for rdv in rdvs {
+            for w in ntfy_schedule_rdv(&settings, &rdv, now).await {
+                eprintln!("ntfy_sync: {}", w);
             }
         }
-    }
+    });
 }
 
 #[cfg(test)]
@@ -1195,6 +1188,106 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].client_id, alice.id);
         assert_eq!(list[0].client_nom, "Alice");
+    }
+
+    #[test]
+    fn rdv_list_client_inclut_annule() {
+        let conn = crate::db::open_memory().unwrap();
+        let alice = seed_client(&conn);
+        let tarif = seed_tarif(&conn);
+        let a = rdv_create(
+            &conn,
+            &alice.id,
+            Some(tarif.id.clone()),
+            "2026-09-11T10:00:00Z",
+            60,
+            None,
+        )
+        .unwrap();
+        rdv_create(
+            &conn,
+            &alice.id,
+            Some(tarif.id),
+            "2026-09-12T10:00:00Z",
+            60,
+            None,
+        )
+        .unwrap();
+        rdv_annuler(&conn, &a.id).unwrap();
+
+        let list = rdv_list(&conn, None, None, Some(&alice.id)).unwrap();
+        assert_eq!(list.len(), 2);
+        assert!(list.iter().any(|r| r.statut == "annule"));
+        assert!(list.iter().any(|r| r.statut == "planifie"));
+    }
+
+    #[test]
+    fn rappel_reprogram_apres_annule() {
+        let conn = crate::db::open_memory().unwrap();
+        let client = seed_client(&conn);
+        let rdv = rdv_create(
+            &conn,
+            &client.id,
+            None,
+            "2026-09-12T10:00:00Z",
+            60,
+            None,
+        )
+        .unwrap();
+        let echeance1 = Utc.with_ymd_and_hms(2026, 9, 12, 9, 0, 0).unwrap();
+        super::insert_rappel(&conn, &rdv.id, RappelKind::H1, "ntfy-1", echeance1).unwrap();
+        super::mark_rappels_annule(&conn, &rdv.id).unwrap();
+
+        let echeance2 = Utc.with_ymd_and_hms(2026, 9, 12, 8, 0, 0).unwrap();
+        super::insert_rappel(&conn, &rdv.id, RappelKind::H1, "ntfy-2", echeance2).unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM rappels_ntfy WHERE rdv_id = ?1 AND type = '1h'",
+                params![rdv.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+
+        let (etat, ntfy_id): (String, String) = conn
+            .query_row(
+                "SELECT etat, ntfy_id FROM rappels_ntfy WHERE rdv_id = ?1 AND type = '1h'",
+                params![rdv.id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(etat, "programme");
+        assert_eq!(ntfy_id, "ntfy-2");
+
+        rdv_update(
+            &conn,
+            &rdv.id,
+            &client.id,
+            None,
+            "2026-09-12T14:00:00Z",
+            60,
+            None,
+        )
+        .unwrap();
+
+        let count_after: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM rappels_ntfy WHERE rdv_id = ?1 AND type = '1h'",
+                params![rdv.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count_after, 1);
+
+        let etat_after: String = conn
+            .query_row(
+                "SELECT etat FROM rappels_ntfy WHERE rdv_id = ?1 AND type = '1h'",
+                params![rdv.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(etat_after, "programme");
     }
 
     #[test]

@@ -1,8 +1,19 @@
+use std::time::Duration as StdDuration;
+
 use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
 
 use crate::error::AppError;
 use crate::settings::Settings;
+
+const HTTP_TIMEOUT: StdDuration = StdDuration::from_secs(15);
+
+fn http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(HTTP_TIMEOUT)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
 
 pub trait NtfyClient {
     fn publish(&self, delay: DateTime<Utc>, kind: RappelKind) -> Result<String, AppError>;
@@ -144,7 +155,7 @@ pub async fn ntfy_publish(
         priority,
     };
 
-    let client = reqwest::Client::new();
+    let client = http_client();
     let mut req = client
         .post(&ntfy.serveur)
         .header("Content-Type", "application/json")
@@ -181,7 +192,7 @@ pub async fn ntfy_delete(settings: &Settings, ntfy_id: &str) -> Result<(), AppEr
         ntfy_id
     );
 
-    let client = reqwest::Client::new();
+    let client = http_client();
     let mut req = client.delete(&url);
 
     if !ntfy.token.is_empty() {

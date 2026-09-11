@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Rdv } from '$lib/types';
-	import { sameLocalDay, slotUtcIso, weekDaysFromMonday } from '$lib/format';
+	import { formatTime, sameLocalDay, slotUtcIso, weekDaysFromMonday } from '$lib/format';
 
 	type Props = {
 		startMonday: Date;
@@ -36,13 +36,25 @@
 		return rdvs.filter((r) => sameLocalDay(new Date(r.debut), day));
 	}
 
+	function rdvInGrid(rdv: Rdv): boolean {
+		const start = new Date(rdv.debut);
+		const startMins = start.getHours() * 60 + start.getMinutes();
+		const endMins = startMins + rdv.duree_minutes;
+		const visStart = Math.max(startMins, GRID_START);
+		const visEnd = Math.min(endMins, GRID_END);
+		return visEnd > visStart;
+	}
+
+	function rdvsOutsideForDay(day: Date): Rdv[] {
+		return rdvsForDay(day).filter((r) => !rdvInGrid(r));
+	}
+
 	function rdvStyle(rdv: Rdv): string {
 		const start = new Date(rdv.debut);
 		const startMins = start.getHours() * 60 + start.getMinutes();
 		const endMins = startMins + rdv.duree_minutes;
 		const visStart = Math.max(startMins, GRID_START);
 		const visEnd = Math.min(endMins, GRID_END);
-		if (visEnd <= visStart) return 'display:none';
 		const top = ((visStart - GRID_START) / GRID_TOTAL) * 100;
 		const height = ((visEnd - visStart) / GRID_TOTAL) * 100;
 		return `top:${top}%;height:${height}%`;
@@ -88,7 +100,7 @@
 								onclick={() => onSlot(slotUtcIso(day, slot.hour, slot.minute))}
 							></button>
 						{/each}
-						{#each rdvsForDay(day) as rdv (rdv.id)}
+						{#each rdvsForDay(day).filter(rdvInGrid) as rdv (rdv.id)}
 							<button
 								type="button"
 								class="bg-primary/15 border-primary/40 hover:bg-primary/25 absolute inset-x-0.5 z-10 overflow-hidden rounded border px-1 py-0.5 text-left text-xs"
@@ -102,6 +114,21 @@
 							</button>
 						{/each}
 					</div>
+					{#if rdvsOutsideForDay(day).length > 0}
+						<div class="flex flex-col gap-1 border-t px-1 py-2">
+							<p class="text-muted-foreground text-[10px] font-medium uppercase">Hors plage</p>
+							{#each rdvsOutsideForDay(day) as rdv (rdv.id)}
+								<button
+									type="button"
+									class="bg-muted hover:bg-muted/80 rounded border px-2 py-1 text-left text-xs"
+									onclick={() => onRdv(rdv)}
+								>
+									<span class="font-medium">{rdv.client_nom}</span>
+									<span class="text-muted-foreground ml-1">{formatTime(rdv.debut)}</span>
+								</button>
+							{/each}
+						</div>
+					{/if}
 				</div>
 			{/each}
 		</div>

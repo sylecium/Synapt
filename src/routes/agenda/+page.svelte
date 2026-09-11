@@ -79,6 +79,7 @@
 
 	function onRdvSaved(_result: RdvCreateResult) {
 		rdvDialogOpen = false;
+		presetDebut = undefined;
 		loadRdvs();
 	}
 
@@ -99,7 +100,14 @@
 			</Button>
 			<Button variant="outline" onclick={prevWeek}>Sem. préc.</Button>
 			<Button variant="outline" onclick={nextWeek}>Sem. suiv.</Button>
-			<Button onclick={() => (rdvDialogOpen = true)}>Nouveau RDV</Button>
+			<Button
+				onclick={() => {
+					presetDebut = undefined;
+					rdvDialogOpen = true;
+				}}
+			>
+				Nouveau RDV
+			</Button>
 		</div>
 	</div>
 

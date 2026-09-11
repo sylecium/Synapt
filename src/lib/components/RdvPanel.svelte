@@ -1,9 +1,10 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { openUrl } from '@tauri-apps/plugin-opener';
 	import { writeText } from '@tauri-apps/plugin-clipboard-manager';
-	import { rdvAnnuler, rdvGet, stripeEnsureLink } from '$lib/api';
-	import type { RappelNtfy, Rdv, RdvDetail } from '$lib/types';
+	import { rdvAnnuler, rdvGet, settingsGet, stripeEnsureLink, tarifsList } from '$lib/api';
+	import type { RappelNtfy, Rdv, RdvDetail, SettingsPublic, Tarif } from '$lib/types';
 	import { formatDateTime } from '$lib/format';
 	import RdvDialog from '$lib/components/RdvDialog.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -19,12 +20,22 @@
 	let { open = $bindable(), rdvId, onClose, onUpdated }: Props = $props();
 
 	let detail = $state<RdvDetail | null>(null);
+	let settings = $state<SettingsPublic | null>(null);
+	let tarifs = $state<Tarif[]>([]);
 	let loading = $state(false);
 	let editOpen = $state(false);
 	let cancelling = $state(false);
 
 	const rdv = $derived(detail?.rdv ?? null);
 	const rappels = $derived(detail?.rappels ?? []);
+	const stripeDisabled = $derived.by(() => {
+		if (!rdv) return true;
+		if (rdv.stripe_url) return false;
+		if (!settings?.stripe_configured) return true;
+		if (!rdv.tarif_id) return true;
+		const tarif = tarifs.find((t) => t.id === rdv.tarif_id);
+		return !tarif || tarif.prix_centimes === 0;
+	});
 
 	$effect(() => {
 		if (open && rdvId) {
@@ -32,6 +43,10 @@
 		} else if (!open) {
 			detail = null;
 		}
+	});
+
+	onMount(async () => {
+		[settings, tarifs] = await Promise.all([settingsGet(), tarifsList()]);
 	});
 
 	async function loadDetail(id: string) {
@@ -96,7 +111,10 @@
 		if (!rdv) return;
 		cancelling = true;
 		try {
-			await rdvAnnuler(rdv.id);
+			const result = await rdvAnnuler(rdv.id);
+			for (const w of result.warnings) {
+				toast.error(w);
+			}
 			toast.success('RDV annulé');
 			open = false;
 			onUpdated();
@@ -165,8 +183,12 @@
 					<Button variant="outline" size="sm" onclick={() => openLink(rdv.jitsi_url)}>
 						Ouvrir Jitsi
 					</Button>
-					<Button variant="outline" size="sm" onclick={copyStripe}>Copier Stripe</Button>
-					<Button variant="outline" size="sm" onclick={openStripe}>Ouvrir Stripe</Button>
+					<Button variant="outline" size="sm" onclick={copyStripe} disabled={stripeDisabled}>
+						Copier Stripe
+					</Button>
+					<Button variant="outline" size="sm" onclick={openStripe} disabled={stripeDisabled}>
+						Ouvrir Stripe
+					</Button>
 				</div>
 
 				<div class="flex flex-wrap gap-2 pt-2">
