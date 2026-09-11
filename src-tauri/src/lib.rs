@@ -2,7 +2,10 @@ pub mod commands;
 pub mod db;
 pub mod error;
 pub mod models;
+pub mod ntfy;
 pub mod overlap;
+pub mod settings;
+pub mod stripe;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
