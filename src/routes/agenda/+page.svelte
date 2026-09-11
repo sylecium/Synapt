@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { toast } from 'svelte-sonner';
 	import { CalendarDate, type DateValue } from '@internationalized/date';
 	import { rdvList } from '$lib/api';
 	import type { Rdv, RdvCreateResult } from '$lib/types';
@@ -78,10 +77,7 @@
 		panelOpen = true;
 	}
 
-	function onRdvSaved(result: RdvCreateResult) {
-		for (const w of result.warnings) {
-			toast.error(w);
-		}
+	function onRdvSaved(_result: RdvCreateResult) {
 		rdvDialogOpen = false;
 		loadRdvs();
 	}
