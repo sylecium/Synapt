@@ -3,9 +3,12 @@
 	import { toast } from 'svelte-sonner';
 	import { ntfyTest, settingsGet, settingsSet } from '$lib/api';
 	import type { SettingsPublic } from '$lib/types';
+	import PageHeader from '$lib/components/PageHeader.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
+	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
+	import { Switch } from '$lib/components/ui/switch/index.js';
 
 	let loaded = $state<SettingsPublic | null>(null);
 	let ntfyServeur = $state('');
@@ -64,10 +67,12 @@
 	}
 </script>
 
-<div class="flex flex-col gap-6 p-6">
-	<h1 class="text-2xl font-semibold">Réglages</h1>
+<div class="flex flex-col gap-4 p-4">
+	<PageHeader title="Réglages" />
 
-	{#if loaded}
+	{#if !loaded}
+		<Skeleton class="h-64 max-w-lg" />
+	{:else}
 		<section class="flex max-w-lg flex-col gap-4">
 			<h2 class="text-sm font-medium">ntfy</h2>
 			<div class="flex flex-col gap-2">
@@ -77,6 +82,9 @@
 			<div class="flex flex-col gap-2">
 				<Label for="ntfy-topic">Topic</Label>
 				<Input id="ntfy-topic" bind:value={ntfyTopic} />
+				<p class="text-muted-foreground text-xs">
+					Nom secret du canal. Sans topic, les rappels téléphone sont coupés.
+				</p>
 			</div>
 			<div class="flex flex-col gap-2">
 				<Label for="ntfy-token">Token</Label>
@@ -86,13 +94,14 @@
 					bind:value={ntfyToken}
 					placeholder={secretPlaceholder(loaded.ntfy_token_configured, loaded.ntfy_token_last4)}
 				/>
+				<p class="text-muted-foreground text-xs">Optionnel, si le serveur ntfy l'exige.</p>
 			</div>
 			<div class="flex items-center gap-2">
-				<input id="rappel-24h" type="checkbox" bind:checked={rappel24h} />
+				<Switch id="rappel-24h" bind:checked={rappel24h} />
 				<Label for="rappel-24h">Rappel 24 h</Label>
 			</div>
 			<div class="flex items-center gap-2">
-				<input id="rappel-1h" type="checkbox" bind:checked={rappel1h} />
+				<Switch id="rappel-1h" bind:checked={rappel1h} />
 				<Label for="rappel-1h">Rappel 1 h</Label>
 			</div>
 			<Button variant="outline" onclick={testNtfy} disabled={testing}>Tester</Button>
@@ -108,6 +117,9 @@
 					bind:value={stripeSecretKey}
 					placeholder={secretPlaceholder(loaded.stripe_configured, loaded.stripe_last4)}
 				/>
+				<p class="text-muted-foreground text-xs">
+					Collez une clé secrète sk_…. Elle reste sur cette machine.
+				</p>
 			</div>
 		</section>
 

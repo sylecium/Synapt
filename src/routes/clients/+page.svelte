@@ -1,11 +1,15 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
 	import { clientsList, clientsUpsert } from '$lib/api';
 	import type { Client } from '$lib/types';
+	import EmptyState from '$lib/components/EmptyState.svelte';
+	import PageHeader from '$lib/components/PageHeader.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
+	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
 
@@ -16,6 +20,7 @@
 	let email = $state('');
 	let telephone = $state('');
 	let saving = $state(false);
+	let loading = $state(true);
 
 	const filtered = $derived(
 		clients.filter((c) => c.nom.toLowerCase().includes(recherche.toLowerCase()))
@@ -24,7 +29,12 @@
 	onMount(load);
 
 	async function load() {
-		clients = await clientsList();
+		loading = true;
+		try {
+			clients = await clientsList();
+		} finally {
+			loading = false;
+		}
 	}
 
 	function openCreate() {
@@ -57,34 +67,46 @@
 	}
 </script>
 
-<div class="flex flex-col gap-4 p-6">
-	<div class="flex items-center justify-between gap-4">
-		<h1 class="text-2xl font-semibold">Clients</h1>
+<div class="flex flex-col gap-4 p-4">
+	<PageHeader title="Clients">
 		<Button onclick={openCreate}>Nouveau client</Button>
-	</div>
+	</PageHeader>
 
-	<Input placeholder="Rechercher par nom…" bind:value={recherche} class="max-w-sm" />
+	{#if loading}
+		<Skeleton class="h-10 max-w-sm" />
+		<Skeleton class="h-48" />
+	{:else if clients.length === 0}
+		<EmptyState
+			title="Aucun client"
+			description="Créer une fiche pour prendre un rendez-vous."
+			actionLabel="Nouveau client"
+			onclick={openCreate}
+		/>
+	{:else}
+		<Input placeholder="Rechercher par nom…" bind:value={recherche} class="max-w-sm" />
 
-	<Table.Root>
-		<Table.Header>
-			<Table.Row>
-				<Table.Head>Nom</Table.Head>
-				<Table.Head>Email</Table.Head>
-				<Table.Head>Téléphone</Table.Head>
-			</Table.Row>
-		</Table.Header>
-		<Table.Body>
-			{#each filtered as client (client.id)}
+		<Table.Root>
+			<Table.Header>
 				<Table.Row>
-					<Table.Cell>
-						<a href="/clients/{client.id}" class="font-medium hover:underline">{client.nom}</a>
-					</Table.Cell>
-					<Table.Cell>{client.email ?? '—'}</Table.Cell>
-					<Table.Cell>{client.telephone ?? '—'}</Table.Cell>
+					<Table.Head>Nom</Table.Head>
+					<Table.Head>Email</Table.Head>
+					<Table.Head>Téléphone</Table.Head>
 				</Table.Row>
-			{/each}
-		</Table.Body>
-	</Table.Root>
+			</Table.Header>
+			<Table.Body>
+				{#each filtered as client (client.id)}
+					<Table.Row
+						class="hover:bg-muted/50 cursor-pointer"
+						onclick={() => goto(`/clients/${client.id}`)}
+					>
+						<Table.Cell class="font-medium">{client.nom}</Table.Cell>
+						<Table.Cell>{client.email ?? '—'}</Table.Cell>
+						<Table.Cell>{client.telephone ?? '—'}</Table.Cell>
+					</Table.Row>
+				{/each}
+			</Table.Body>
+		</Table.Root>
+	{/if}
 </div>
 
 <Dialog.Root bind:open={dialogOpen}>

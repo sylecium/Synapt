@@ -4,10 +4,13 @@
 	import { tarifsList, tarifsSetActif, tarifsUpsert } from '$lib/api';
 	import type { Tarif } from '$lib/types';
 	import { centimesToEuros, eurosToCentimes, formatCentimes } from '$lib/format';
+	import EmptyState from '$lib/components/EmptyState.svelte';
+	import PageHeader from '$lib/components/PageHeader.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
+	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
 
@@ -18,11 +21,17 @@
 	let dureeMinutes = $state('60');
 	let prixEuros = $state('50.00');
 	let saving = $state(false);
+	let loading = $state(true);
 
 	onMount(load);
 
 	async function load() {
-		tarifs = await tarifsList();
+		loading = true;
+		try {
+			tarifs = await tarifsList();
+		} finally {
+			loading = false;
+		}
 	}
 
 	function openCreate() {
@@ -60,60 +69,100 @@
 		}
 	}
 
-	async function desactiver(id: string) {
+	async function setActif(id: string, actif: boolean) {
 		try {
-			await tarifsSetActif(id, false);
+			await tarifsSetActif(id, actif);
 			await load();
-			toast.success('Tarif désactivé');
+			toast.success(actif ? 'Tarif réactivé' : 'Tarif désactivé');
 		} catch (e) {
 			toast.error(String(e));
 		}
 	}
 </script>
 
-<div class="flex flex-col gap-4 p-6">
-	<div class="flex items-center justify-between">
-		<h1 class="text-2xl font-semibold">Tarifs</h1>
+<div class="flex flex-col gap-4 p-4">
+	<PageHeader title="Tarifs">
 		<Button onclick={openCreate}>Nouveau tarif</Button>
-	</div>
+	</PageHeader>
 
-	<Table.Root>
-		<Table.Header>
-			<Table.Row>
-				<Table.Head>Nom</Table.Head>
-				<Table.Head>Durée</Table.Head>
-				<Table.Head>Prix</Table.Head>
-				<Table.Head>Statut</Table.Head>
-				<Table.Head class="text-right">Actions</Table.Head>
-			</Table.Row>
-		</Table.Header>
-		<Table.Body>
-			{#each tarifs as tarif (tarif.id)}
+	{#if loading}
+		<Skeleton class="h-48" />
+	{:else if tarifs.length === 0}
+		<EmptyState
+			title="Aucun tarif"
+			description="Créer une prestation avec durée et prix."
+			actionLabel="Nouveau tarif"
+			onclick={openCreate}
+		/>
+	{:else}
+		<Table.Root>
+			<Table.Header>
 				<Table.Row>
-					<Table.Cell>{tarif.nom}</Table.Cell>
-					<Table.Cell>{tarif.duree_minutes} min</Table.Cell>
-					<Table.Cell>{formatCentimes(tarif.prix_centimes)}</Table.Cell>
-					<Table.Cell>
-						{#if tarif.actif}
-							<Badge>Actif</Badge>
-						{:else}
-							<Badge variant="secondary">Inactif</Badge>
-						{/if}
-					</Table.Cell>
-					<Table.Cell class="text-right">
-						<div class="flex justify-end gap-2">
-							<Button variant="outline" size="sm" onclick={() => openEdit(tarif)}>Modifier</Button>
-							{#if tarif.actif}
-								<Button variant="outline" size="sm" onclick={() => desactiver(tarif.id)}>
-									Désactiver
-								</Button>
-							{/if}
-						</div>
-					</Table.Cell>
+					<Table.Head>Nom</Table.Head>
+					<Table.Head>Durée</Table.Head>
+					<Table.Head>Prix</Table.Head>
+					<Table.Head>Statut</Table.Head>
+					<Table.Head class="text-right">Actions</Table.Head>
 				</Table.Row>
-			{/each}
-		</Table.Body>
-	</Table.Root>
+			</Table.Header>
+			<Table.Body>
+				{#each tarifs as tarif (tarif.id)}
+					<Table.Row
+						class="hover:bg-muted/50 cursor-pointer"
+						onclick={() => openEdit(tarif)}
+					>
+						<Table.Cell>{tarif.nom}</Table.Cell>
+						<Table.Cell class="font-mono tabular-nums">{tarif.duree_minutes} min</Table.Cell>
+						<Table.Cell class="font-mono tabular-nums">{formatCentimes(tarif.prix_centimes)}</Table.Cell>
+						<Table.Cell>
+							{#if tarif.actif}
+								<Badge>Actif</Badge>
+							{:else}
+								<Badge variant="secondary">Inactif</Badge>
+							{/if}
+						</Table.Cell>
+						<Table.Cell class="text-right">
+							<div class="flex justify-end gap-2">
+								<Button
+									variant="outline"
+									size="sm"
+									onclick={(e) => {
+										e.stopPropagation();
+										openEdit(tarif);
+									}}
+								>
+									Modifier
+								</Button>
+								{#if tarif.actif}
+									<Button
+										variant="outline"
+										size="sm"
+										onclick={(e) => {
+											e.stopPropagation();
+											setActif(tarif.id, false);
+										}}
+									>
+										Désactiver
+									</Button>
+								{:else}
+									<Button
+										variant="outline"
+										size="sm"
+										onclick={(e) => {
+											e.stopPropagation();
+											setActif(tarif.id, true);
+										}}
+									>
+										Réactiver
+									</Button>
+								{/if}
+							</div>
+						</Table.Cell>
+					</Table.Row>
+				{/each}
+			</Table.Body>
+		</Table.Root>
+	{/if}
 </div>
 
 <Dialog.Root bind:open={dialogOpen}>
