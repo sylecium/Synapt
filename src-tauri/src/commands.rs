@@ -6,7 +6,10 @@ use uuid::Uuid;
 use crate::db::{db_path, migrate, open_file};
 use crate::error::AppError;
 use crate::models::{Client, Dashboard, Note, Rdv, Tarif};
-use crate::ntfy::{echeance, should_publish, NtfyClient, RappelKind, ReqwestNtfy};
+use crate::ntfy::{
+    echeance, ntfy_delete, should_publish, BlockingReqwestNtfy, NtfyClient, RappelKind,
+    ReqwestNtfy,
+};
 use crate::overlap::overlaps;
 use crate::settings::{load_settings, save_settings, Settings, SettingsPublic};
 use crate::stripe::stripe_create_payment_link;
@@ -204,13 +207,49 @@ pub fn ntfy_sync<C: NtfyClient>(
     Ok(warnings)
 }
 
-fn ntfy_schedule_rdv<C: NtfyClient>(
-    conn: &Connection,
-    settings: &Settings,
-    rdv: &Rdv,
-    now: DateTime<Utc>,
-    client_factory: impl Fn(&Rdv, RappelKind) -> C,
-) -> Vec<String> {
+fn rappels_ntfy_ids(conn: &Connection, rdv_id: &str) -> Result<Vec<String>, AppError> {
+    let mut stmt = conn.prepare(
+        "SELECT ntfy_id FROM rappels_ntfy WHERE rdv_id = ?1 AND etat = 'programme' AND ntfy_id IS NOT NULL",
+    )?;
+    let ids = stmt
+        .query_map(params![rdv_id], |row| row.get(0))?
+        .filter_map(Result::ok)
+        .collect();
+    Ok(ids)
+}
+
+fn mark_rappels_annule(conn: &Connection, rdv_id: &str) -> Result<(), AppError> {
+    conn.execute(
+        "UPDATE rappels_ntfy SET etat = 'annule' WHERE rdv_id = ?1 AND etat = 'programme'",
+        params![rdv_id],
+    )?;
+    Ok(())
+}
+
+async fn cancel_rappels_ntfy(settings: &Settings, rdv_id: &str) -> Vec<String> {
+    let mut warnings = Vec::new();
+    let ntfy_ids = match with_db(|conn| rappels_ntfy_ids(conn, rdv_id)) {
+        Ok(ids) => ids,
+        Err(e) => {
+            warnings.push(e.message);
+            return warnings;
+        }
+    };
+
+    for ntfy_id in ntfy_ids {
+        if let Err(e) = ntfy_delete(settings, &ntfy_id).await {
+            eprintln!("ntfy delete: {}", e.message);
+            warnings.push(e.message);
+        }
+    }
+
+    if let Err(e) = with_db(|conn| mark_rappels_annule(conn, rdv_id)) {
+        warnings.push(e.message);
+    }
+    warnings
+}
+
+async fn ntfy_schedule_rdv(settings: &Settings, rdv: &Rdv, now: DateTime<Utc>) -> Vec<String> {
     let mut warnings = Vec::new();
     let debut: DateTime<Utc> = match rdv.debut.parse() {
         Ok(d) => d,
@@ -219,29 +258,38 @@ fn ntfy_schedule_rdv<C: NtfyClient>(
             return warnings;
         }
     };
+
     for kind in kinds_for_settings(settings) {
         let echeance_at = echeance(debut, kind);
-        let deja = match rappel_deja_programme(conn, &rdv.id, kind) {
+        let should = match with_db(|conn| {
+            let deja = rappel_deja_programme(conn, &rdv.id, kind)?;
+            Ok(should_publish(
+                &settings.ntfy.topic,
+                true,
+                &rdv.statut,
+                now,
+                echeance_at,
+                deja,
+            ))
+        }) {
             Ok(v) => v,
             Err(e) => {
                 warnings.push(e.message);
                 continue;
             }
         };
-        if !should_publish(
-            &settings.ntfy.topic,
-            true,
-            &rdv.statut,
-            now,
-            echeance_at,
-            deja,
-        ) {
+        if !should {
             continue;
         }
-        let ntfy_client = client_factory(rdv, kind);
-        match ntfy_client.publish(echeance_at, kind) {
+
+        let client_nom = with_db(|conn| fetch_client_nom(conn, &rdv.client_id))
+            .unwrap_or_default();
+        let ntfy = ReqwestNtfy::for_rdv(&settings, &client_nom, debut, &rdv.jitsi_url, kind);
+        match ntfy.publish_async(echeance_at).await {
             Ok(ntfy_id) => {
-                if let Err(e) = insert_rappel(conn, &rdv.id, kind, &ntfy_id, echeance_at) {
+                if let Err(e) =
+                    with_db(|conn| insert_rappel(conn, &rdv.id, kind, &ntfy_id, echeance_at))
+                {
                     eprintln!("ntfy insert rappel: {}", e.message);
                     warnings.push(e.message);
                 }
@@ -292,42 +340,6 @@ fn save_stripe_link(
         params![stripe_url, stripe_id, now, rdv_id],
     )?;
     fetch_rdv(conn, rdv_id)
-}
-
-fn cancel_rappels_ntfy(conn: &Connection, settings: &Settings, rdv_id: &str) -> Vec<String> {
-    let mut warnings = Vec::new();
-    let mut stmt = match conn.prepare(
-        "SELECT ntfy_id FROM rappels_ntfy WHERE rdv_id = ?1 AND etat = 'programme' AND ntfy_id IS NOT NULL",
-    ) {
-        Ok(s) => s,
-        Err(e) => {
-            warnings.push(e.to_string());
-            return warnings;
-        }
-    };
-    let ntfy_ids: Vec<String> = match stmt.query_map(params![rdv_id], |row| row.get(0)) {
-        Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
-        Err(e) => {
-            warnings.push(e.to_string());
-            Vec::new()
-        }
-    };
-
-    for ntfy_id in ntfy_ids {
-        if let Err(e) = tauri::async_runtime::block_on(crate::ntfy::ntfy_delete(settings, &ntfy_id))
-        {
-            eprintln!("ntfy delete: {}", e.message);
-            warnings.push(e.message);
-        }
-    }
-
-    if let Err(e) = conn.execute(
-        "UPDATE rappels_ntfy SET etat = 'annule' WHERE rdv_id = ?1 AND etat = 'programme'",
-        params![rdv_id],
-    ) {
-        warnings.push(e.to_string());
-    }
-    warnings
 }
 
 fn local_day_bounds(now: DateTime<Utc>) -> (DateTime<Utc>, DateTime<Utc>) {
@@ -853,15 +865,7 @@ pub async fn rdv_create(
         rdv
     };
 
-    let ntfy_warnings = with_db(|conn| {
-        Ok(ntfy_schedule_rdv(conn, &settings, &rdv, now, |r, kind| {
-            let client_nom = fetch_client_nom(conn, &r.client_id).unwrap_or_default();
-            let debut_dt = r.debut.parse().unwrap_or(now);
-            ReqwestNtfy::for_rdv(&settings, &client_nom, debut_dt, &r.jitsi_url, kind)
-        }))
-    })
-    .map_err(|e| e.message)?;
-    warnings.extend(ntfy_warnings);
+    warnings.extend(ntfy_schedule_rdv(&settings, &rdv, now).await);
 
     Ok(RdvCreateResult { rdv, warnings })
 }
@@ -881,18 +885,6 @@ pub async fn rdv_update(
     let existing = with_db(|conn| repo::rdv_get(conn, &id)).map_err(|e| e.message)?;
     let debut_changed = existing.debut != debut;
 
-    if debut_changed {
-        let _ = with_db(|conn| {
-            let ws = cancel_rappels_ntfy(conn, &settings, &id);
-            if !ws.is_empty() {
-                for w in ws {
-                    eprintln!("rdv_update ntfy cancel: {}", w);
-                }
-            }
-            Ok(())
-        });
-    }
-
     let rdv = with_db(|conn| {
         repo::rdv_update(
             conn,
@@ -907,17 +899,12 @@ pub async fn rdv_update(
     .map_err(|e| e.message)?;
 
     if debut_changed {
-        let _ = with_db(|conn| {
-            let ws = ntfy_schedule_rdv(conn, &settings, &rdv, now, |r, kind| {
-                let client_nom = fetch_client_nom(conn, &r.client_id).unwrap_or_default();
-                let debut_dt = r.debut.parse().unwrap_or(now);
-                ReqwestNtfy::for_rdv(&settings, &client_nom, debut_dt, &r.jitsi_url, kind)
-            });
-            for w in ws {
-                eprintln!("rdv_update ntfy schedule: {}", w);
-            }
-            Ok(())
-        });
+        for w in cancel_rappels_ntfy(&settings, &id).await {
+            eprintln!("rdv_update ntfy cancel: {}", w);
+        }
+        for w in ntfy_schedule_rdv(&settings, &rdv, now).await {
+            eprintln!("rdv_update ntfy schedule: {}", w);
+        }
     }
 
     Ok(rdv)
@@ -926,9 +913,7 @@ pub async fn rdv_update(
 #[tauri::command]
 pub async fn rdv_annuler(id: String) -> Result<Rdv, String> {
     let settings = load_settings();
-    let warnings = with_db(|conn| Ok(cancel_rappels_ntfy(conn, &settings, &id)))
-        .map_err(|e| e.message)?;
-    for w in warnings {
+    for w in cancel_rappels_ntfy(&settings, &id).await {
         eprintln!("rdv_annuler ntfy: {}", w);
     }
     with_db(|conn| repo::rdv_annuler(conn, &id)).map_err(|e| e.message)
@@ -986,7 +971,13 @@ pub fn run_ntfy_sync() {
             let result = ntfy_sync(&conn, &settings, now, |rdv, kind| {
                 let client_nom = fetch_client_nom(&conn, &rdv.client_id).unwrap_or_default();
                 let debut_dt = rdv.debut.parse().unwrap_or(now);
-                ReqwestNtfy::for_rdv(&settings, &client_nom, debut_dt, &rdv.jitsi_url, kind)
+                BlockingReqwestNtfy(ReqwestNtfy::for_rdv(
+                    &settings,
+                    &client_nom,
+                    debut_dt,
+                    &rdv.jitsi_url,
+                    kind,
+                ))
             });
             if let Ok(warnings) = result {
                 for w in warnings {
@@ -1009,8 +1000,9 @@ mod tests {
     use crate::ntfy::{NtfyClient, RappelKind};
     use crate::settings::Settings;
     use chrono::{DateTime, Duration, TimeZone, Utc};
-    use rusqlite::Connection;
+    use rusqlite::{params, Connection};
     use std::sync::Mutex;
+    use uuid::Uuid;
 
     struct FakeNtfy {
         published: std::sync::Arc<Mutex<Vec<RappelKind>>>,
@@ -1160,6 +1152,65 @@ mod tests {
         ntfy_sync(&conn, &settings, now, |_rdv, _kind| fake.clone()).unwrap();
         let published = fake.published.lock().unwrap().clone();
         assert_eq!(published, vec![RappelKind::H1]);
+    }
+
+    #[test]
+    fn rdv_update_echec_overlap_conserve_rappels() {
+        let conn = crate::db::open_memory().unwrap();
+        let c = seed_client(&conn);
+        let t = seed_tarif(&conn);
+        let a = rdv_create(
+            &conn,
+            &c.id,
+            Some(t.id.clone()),
+            "2026-09-11T10:00:00Z",
+            60,
+            None,
+        )
+        .unwrap();
+        rdv_create(
+            &conn,
+            &c.id,
+            Some(t.id),
+            "2026-09-11T11:00:00Z",
+            60,
+            None,
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO rappels_ntfy (id, rdv_id, type, ntfy_id, echeance, etat) VALUES (?1, ?2, '1h', 'fake-id', ?3, 'programme')",
+            rusqlite::params![
+                Uuid::new_v4().to_string(),
+                a.id,
+                "2026-09-11T09:00:00Z"
+            ],
+        )
+        .unwrap();
+
+        let err = rdv_update(
+            &conn,
+            &a.id,
+            &c.id,
+            None,
+            "2026-09-11T11:00:00Z",
+            60,
+            None,
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("chevauche") || err.message.contains("horaire"),
+            "message: {}",
+            err.message
+        );
+
+        let etat: String = conn
+            .query_row(
+                "SELECT etat FROM rappels_ntfy WHERE rdv_id = ?1",
+                rusqlite::params![a.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(etat, "programme");
     }
 
     #[test]

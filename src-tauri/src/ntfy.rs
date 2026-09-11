@@ -46,16 +46,29 @@ impl ReqwestNtfy {
     }
 }
 
-impl NtfyClient for ReqwestNtfy {
-    fn publish(&self, delay: DateTime<Utc>, _kind: RappelKind) -> Result<String, AppError> {
-        tauri::async_runtime::block_on(ntfy_publish(
+impl ReqwestNtfy {
+    pub async fn publish_async(&self, delay: DateTime<Utc>) -> Result<String, AppError> {
+        ntfy_publish(
             &self.settings,
             &self.title,
             &self.message,
             &self.click,
             Some(delay),
             self.priority,
-        ))
+        )
+        .await
+    }
+
+    pub fn publish_blocking(&self, delay: DateTime<Utc>) -> Result<String, AppError> {
+        tauri::async_runtime::block_on(self.publish_async(delay))
+    }
+}
+
+pub struct BlockingReqwestNtfy(pub ReqwestNtfy);
+
+impl NtfyClient for BlockingReqwestNtfy {
+    fn publish(&self, delay: DateTime<Utc>, _kind: RappelKind) -> Result<String, AppError> {
+        self.0.publish_blocking(delay)
     }
 }
 
