@@ -5,6 +5,7 @@ import type {
 	Note,
 	Rdv,
 	RdvCreateResult,
+	RdvDetail,
 	SettingsPublic,
 	SettingsSetInput,
 	Tarif
@@ -56,7 +57,7 @@ export const rdvList = (p: { from?: string; to?: string; client_id?: string }) =
 		client_id: p.client_id ?? null
 	});
 
-export const rdvGet = (id: string) => invoke<Rdv>('rdv_get', { id });
+export const rdvGet = (id: string) => invoke<RdvDetail>('rdv_get', { id });
 
 export const rdvCreate = (p: {
 	client_id: string;

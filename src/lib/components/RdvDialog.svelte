@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
-	import { clientsList, rdvCreate, tarifsList } from '$lib/api';
+	import { clientsList, rdvCreate, rdvGet, rdvUpdate, tarifsList } from '$lib/api';
 	import type { Client, RdvCreateResult, Tarif } from '$lib/types';
 	import { localDatetimeToUtcIso, utcIsoToLocalDatetime } from '$lib/format';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -11,13 +11,23 @@
 
 	type Props = {
 		open: boolean;
+		rdvId?: string;
 		presetDebut?: string;
 		presetClientId?: string;
 		onClose: () => void;
 		onSaved: (r: RdvCreateResult) => void;
 	};
 
-	let { open = $bindable(), presetDebut, presetClientId, onClose, onSaved }: Props = $props();
+	let {
+		open = $bindable(),
+		rdvId,
+		presetDebut,
+		presetClientId,
+		onClose,
+		onSaved
+	}: Props = $props();
+
+	const isEdit = $derived(!!rdvId);
 
 	let clients = $state<Client[]>([]);
 	let tarifs = $state<Tarif[]>([]);
@@ -40,6 +50,18 @@
 	async function loadData() {
 		overlapError = '';
 		[clients, tarifs] = await Promise.all([clientsList(), tarifsList()]);
+
+		if (rdvId) {
+			const detail = await rdvGet(rdvId);
+			const rdv = detail.rdv;
+			clientId = rdv.client_id;
+			tarifId = rdv.tarif_id ?? '';
+			debutLocal = utcIsoToLocalDatetime(rdv.debut);
+			dureeMinutes = String(rdv.duree_minutes);
+			note = rdv.note ?? '';
+			return;
+		}
+
 		clientId = presetClientId ?? clients[0]?.id ?? '';
 		const actifs = tarifs.filter((t) => t.actif);
 		tarifId = actifs[0]?.id ?? '';
@@ -72,17 +94,29 @@
 		overlapError = '';
 		saving = true;
 		try {
-			const result = await rdvCreate({
-				client_id: clientId,
-				tarif_id: tarifId || null,
-				debut: localDatetimeToUtcIso(debutLocal),
-				duree_minutes: Number.parseInt(dureeMinutes, 10),
-				note: note.trim() || null
-			});
-			for (const w of result.warnings) {
-				toast.warning(w);
+			if (isEdit && rdvId) {
+				const rdv = await rdvUpdate({
+					id: rdvId,
+					client_id: clientId,
+					tarif_id: tarifId || null,
+					debut: localDatetimeToUtcIso(debutLocal),
+					duree_minutes: Number.parseInt(dureeMinutes, 10),
+					note: note.trim() || null
+				});
+				onSaved({ rdv, warnings: [] });
+			} else {
+				const result = await rdvCreate({
+					client_id: clientId,
+					tarif_id: tarifId || null,
+					debut: localDatetimeToUtcIso(debutLocal),
+					duree_minutes: Number.parseInt(dureeMinutes, 10),
+					note: note.trim() || null
+				});
+				for (const w of result.warnings) {
+					toast.warning(w);
+				}
+				onSaved(result);
 			}
-			onSaved(result);
 			open = false;
 		} catch (e) {
 			const msg = String(e);
@@ -100,7 +134,7 @@
 <Dialog.Root open={open} onOpenChange={handleOpenChange}>
 	<Dialog.Content class="sm:max-w-md">
 		<Dialog.Header>
-			<Dialog.Title>Nouveau RDV</Dialog.Title>
+			<Dialog.Title>{isEdit ? 'Modifier RDV' : 'Nouveau RDV'}</Dialog.Title>
 		</Dialog.Header>
 		<div class="flex flex-col gap-4">
 			<div class="flex flex-col gap-2">
@@ -147,7 +181,7 @@
 		</div>
 		<Dialog.Footer>
 			<Button variant="outline" onclick={() => handleOpenChange(false)}>Annuler</Button>
-			<Button onclick={submit} disabled={saving}>Créer</Button>
+			<Button onclick={submit} disabled={saving}>{isEdit ? 'Enregistrer' : 'Créer'}</Button>
 		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>

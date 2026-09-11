@@ -36,6 +36,17 @@ export type Rdv = {
 
 export type RdvCreateResult = { rdv: Rdv; warnings: string[] };
 
+export type RappelNtfy = {
+	id: string;
+	rdv_id: string;
+	type: '24h' | '1h';
+	ntfy_id: string | null;
+	echeance: string;
+	etat: 'programme' | 'annule';
+};
+
+export type RdvDetail = { rdv: Rdv; rappels: RappelNtfy[] };
+
 export type Dashboard = { aujourdhui: Rdv[]; a_venir: Rdv[] };
 
 export type Note = {

@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::db::{db_path, migrate, open_file};
 use crate::error::AppError;
-use crate::models::{Client, Dashboard, Note, Rdv, Tarif};
+use crate::models::{Client, Dashboard, Note, RappelNtfy, Rdv, RdvDetail, Tarif};
 use crate::ntfy::{
     echeance, ntfy_delete, should_publish, BlockingReqwestNtfy, NtfyClient, RappelKind,
     ReqwestNtfy,
@@ -663,9 +663,30 @@ pub fn rdv_update(
     fetch_rdv(conn, id)
 }
 
-pub fn rdv_get(conn: &Connection, id: &str) -> Result<Rdv, AppError> {
+fn fetch_rappels(conn: &Connection, rdv_id: &str) -> Result<Vec<RappelNtfy>, AppError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, rdv_id, type, ntfy_id, echeance, etat FROM rappels_ntfy WHERE rdv_id = ?1 ORDER BY echeance",
+    )?;
+    let rappels = stmt
+        .query_map(params![rdv_id], |row| {
+            Ok(RappelNtfy {
+                id: row.get(0)?,
+                rdv_id: row.get(1)?,
+                r#type: row.get(2)?,
+                ntfy_id: row.get(3)?,
+                echeance: row.get(4)?,
+                etat: row.get(5)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rappels)
+}
+
+pub fn rdv_get(conn: &Connection, id: &str) -> Result<RdvDetail, AppError> {
     ensure_migrated(conn)?;
-    fetch_rdv(conn, id)
+    let rdv = fetch_rdv(conn, id)?;
+    let rappels = fetch_rappels(conn, id)?;
+    Ok(RdvDetail { rdv, rappels })
 }
 
 pub fn rdv_annuler(conn: &Connection, id: &str) -> Result<Rdv, AppError> {
@@ -860,7 +881,7 @@ pub fn rdv_list(
 }
 
 #[tauri::command]
-pub fn rdv_get(id: String) -> Result<Rdv, String> {
+pub fn rdv_get(id: String) -> Result<RdvDetail, String> {
     with_db(|conn| repo::rdv_get(conn, &id)).map_err(|e| e.message)
 }
 
@@ -929,7 +950,7 @@ pub async fn rdv_update(
     let now = Utc::now();
 
     let existing = with_db(|conn| repo::rdv_get(conn, &id)).map_err(|e| e.message)?;
-    let debut_changed = existing.debut != debut;
+    let debut_changed = existing.rdv.debut != debut;
 
     let rdv = with_db(|conn| {
         repo::rdv_update(
@@ -1129,8 +1150,9 @@ mod tests {
         )
         .unwrap();
         let got = rdv_get(&conn, &rdv.id).unwrap();
-        assert_eq!(got.client_nom, "Alice");
-        assert_eq!(got.tarif_nom, "Consultation");
+        assert_eq!(got.rdv.client_nom, "Alice");
+        assert_eq!(got.rdv.tarif_nom, "Consultation");
+        assert!(got.rappels.is_empty());
 
         let list = rdv_list(
             &conn,

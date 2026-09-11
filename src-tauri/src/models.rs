@@ -64,3 +64,9 @@ pub struct RappelNtfy {
     pub echeance: String,
     pub etat: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RdvDetail {
+    pub rdv: Rdv,
+    pub rappels: Vec<RappelNtfy>,
+}
