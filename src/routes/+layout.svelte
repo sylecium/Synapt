@@ -12,7 +12,12 @@
 <Sidebar.SidebarProvider>
 	<AppSidebar />
 	<Sidebar.SidebarInset>
-		{@render children()}
+		<header class="flex h-10 shrink-0 items-center gap-2 border-b px-2">
+			<Sidebar.Trigger />
+		</header>
+		<div class="min-h-0 flex-1 overflow-auto">
+			{@render children()}
+		</div>
 	</Sidebar.SidebarInset>
 	<Toaster />
 </Sidebar.SidebarProvider>

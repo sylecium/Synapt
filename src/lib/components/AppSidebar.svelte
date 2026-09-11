@@ -1,11 +1,14 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import { toggleMode } from 'mode-watcher';
 	import LayoutDashboardIcon from '@lucide/svelte/icons/layout-dashboard';
 	import CalendarIcon from '@lucide/svelte/icons/calendar';
 	import UsersIcon from '@lucide/svelte/icons/users';
 	import TagIcon from '@lucide/svelte/icons/tag';
 	import StickyNoteIcon from '@lucide/svelte/icons/sticky-note';
 	import SettingsIcon from '@lucide/svelte/icons/settings';
+	import SunIcon from '@lucide/svelte/icons/sun';
+	import MoonIcon from '@lucide/svelte/icons/moon';
 	import * as Sidebar from '$lib/components/ui/sidebar/index.js';
 
 	const items = [
@@ -24,7 +27,7 @@
 	}
 </script>
 
-<Sidebar.Root>
+<Sidebar.Root collapsible="icon">
 	<Sidebar.Header>
 		<div class="px-2 py-1 text-sm font-semibold">Synapt</div>
 	</Sidebar.Header>
@@ -48,4 +51,15 @@
 			</Sidebar.GroupContent>
 		</Sidebar.Group>
 	</Sidebar.Content>
+	<Sidebar.Footer>
+		<Sidebar.Menu>
+			<Sidebar.MenuItem>
+				<Sidebar.MenuButton onclick={toggleMode} tooltipContent="Clair / sombre">
+					<SunIcon class="dark:hidden" />
+					<MoonIcon class="hidden dark:block" />
+					<span>Clair / sombre</span>
+				</Sidebar.MenuButton>
+			</Sidebar.MenuItem>
+		</Sidebar.Menu>
+	</Sidebar.Footer>
 </Sidebar.Root>
