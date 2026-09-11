@@ -12,7 +12,7 @@ export type Tarif = {
 	nom: string;
 	duree_minutes: number;
 	prix_centimes: number;
-	actif: number;
+	actif: boolean;
 	created_at: string;
 	updated_at: string;
 };

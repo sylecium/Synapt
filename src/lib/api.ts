@@ -12,7 +12,8 @@ import type {
 
 export const settingsGet = () => invoke<SettingsPublic>('settings_get');
 
-export const settingsSet = (input: SettingsSetInput) => invoke<void>('settings_set', input);
+export const settingsSet = (input: SettingsSetInput) =>
+	invoke<void>('settings_set', { input });
 
 export const clientsList = () => invoke<Client[]>('clients_list');
 
