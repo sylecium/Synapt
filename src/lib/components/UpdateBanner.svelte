@@ -5,17 +5,22 @@
 	import type { Update } from '@tauri-apps/plugin-updater';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { installUpdateMessage } from '$lib/updater-errors';
-	import { probeUpdate } from '$lib/updater';
+	import { probeUpdate, UPDATE_CHECK_INTERVAL_MS } from '$lib/updater';
 
 	let update = $state<Update | null>(null);
 	let dismissed = $state(false);
 	let installing = $state(false);
 	let percent = $state<number | null>(null);
 
+	async function refresh() {
+		if (dismissed || installing || update) return;
+		update = await probeUpdate();
+	}
+
 	onMount(() => {
-		void probeUpdate().then((found) => {
-			update = found;
-		});
+		void refresh();
+		const id = setInterval(() => void refresh(), UPDATE_CHECK_INTERVAL_MS);
+		return () => clearInterval(id);
 	});
 
 	async function install() {
