@@ -5,8 +5,10 @@
 	import { clientsList, rdvCreate, rdvGet, rdvUpdate, tarifsList } from '$lib/api';
 	import type { Client, RdvCreateResult, Tarif } from '$lib/types';
 	import { localDatetimeToUtcIso, utcIsoToLocalDatetime } from '$lib/format';
+	import { noteIsEmpty } from '$lib/notesHtml';
 	import { userMessage } from '$lib/errors';
 	import ClientCombobox from '$lib/components/ClientCombobox.svelte';
+	import NoteEditor from '$lib/components/NoteEditor.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
@@ -14,7 +16,6 @@
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import * as Popover from '$lib/components/ui/popover/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
-	import { Textarea } from '$lib/components/ui/textarea/index.js';
 
 	type Props = {
 		open: boolean;
@@ -47,6 +48,7 @@
 	let saving = $state(false);
 	let overlapError = $state('');
 	let listsLoaded = $state(false);
+	let formReady = $state(false);
 
 	const NONE = 'none';
 	const tarifsActifs = $derived(tarifs.filter((t) => t.actif));
@@ -105,6 +107,7 @@
 	async function loadData() {
 		overlapError = '';
 		listsLoaded = false;
+		formReady = false;
 		[clients, tarifs] = await Promise.all([clientsList(), tarifsList()]);
 		listsLoaded = true;
 
@@ -116,6 +119,7 @@
 			debutLocal = utcIsoToLocalDatetime(rdv.debut);
 			dureeMinutes = String(rdv.duree_minutes);
 			note = rdv.note ?? '';
+			formReady = true;
 			return;
 		}
 
@@ -125,6 +129,7 @@
 		dureeMinutes = String(actifs[0]?.duree_minutes ?? 60);
 		debutLocal = presetDebut ? utcIsoToLocalDatetime(presetDebut) : defaultDebutLocal();
 		note = '';
+		formReady = true;
 	}
 
 	function defaultDebutLocal(): string {
@@ -158,7 +163,7 @@
 					tarif_id: tarifId || null,
 					debut: localDatetimeToUtcIso(debutLocal),
 					duree_minutes: Number.parseInt(dureeMinutes, 10),
-					note: note.trim() || null
+					note: noteIsEmpty(note) ? null : note
 				});
 				for (const w of result.warnings) {
 					toast.error(userMessage(w));
@@ -170,7 +175,7 @@
 					tarif_id: tarifId || null,
 					debut: localDatetimeToUtcIso(debutLocal),
 					duree_minutes: Number.parseInt(dureeMinutes, 10),
-					note: note.trim() || null
+					note: noteIsEmpty(note) ? null : note
 				});
 				for (const w of result.warnings) {
 					toast.error(userMessage(w));
@@ -269,8 +274,17 @@
 				<Input id="rdv-duree" type="number" min="1" bind:value={dureeMinutes} />
 			</div>
 			<div class="flex flex-col gap-2">
-				<Label for="rdv-note">Note</Label>
-				<Textarea id="rdv-note" bind:value={note} />
+				<Label>Note</Label>
+				{#if formReady}
+					{#key `${rdvId ?? 'new'}:${open}`}
+						<NoteEditor
+							noteId={rdvId ?? 'new'}
+							corps={note}
+							variant="compact"
+							onChange={(html) => (note = html)}
+						/>
+					{/key}
+				{/if}
 			</div>
 			{#if overlapError}
 				<p class="text-destructive text-sm">{overlapError}</p>

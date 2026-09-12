@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { clientsList, clientsUpsert } from '$lib/api';
@@ -6,12 +7,14 @@
 	import type { Client } from '$lib/types';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
+	import RdvDialog from '$lib/components/RdvDialog.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
+	import * as ContextMenu from '$lib/components/ui/context-menu/index.js';
 
 	let clients = $state<Client[]>([]);
 	let recherche = $state('');
@@ -21,6 +24,8 @@
 	let telephone = $state('');
 	let saving = $state(false);
 	let initial = $state(true);
+	let rdvDialogOpen = $state(false);
+	let rdvClientId = $state<string | undefined>();
 
 	const filtered = $derived(
 		clients.filter((c) => c.nom.toLowerCase().includes(recherche.toLowerCase()))
@@ -94,15 +99,34 @@
 			</Table.Header>
 			<Table.Body>
 				{#each filtered as client (client.id)}
-					<Table.Row class="hover:bg-muted/50 relative">
-						<Table.Cell class="font-medium">
-							<a href="/clients/{client.id}" class="after:absolute after:inset-0">
-								{client.nom}
-							</a>
-						</Table.Cell>
-						<Table.Cell>{client.email ?? '—'}</Table.Cell>
-						<Table.Cell>{client.telephone ?? '—'}</Table.Cell>
-					</Table.Row>
+					<ContextMenu.Root>
+						<ContextMenu.Trigger>
+							{#snippet child({ props })}
+								<Table.Row class="hover:bg-muted/50 relative" {...props}>
+									<Table.Cell class="font-medium">
+										<a href="/clients/{client.id}" class="after:absolute after:inset-0">
+											{client.nom}
+										</a>
+									</Table.Cell>
+									<Table.Cell>{client.email ?? '—'}</Table.Cell>
+									<Table.Cell>{client.telephone ?? '—'}</Table.Cell>
+								</Table.Row>
+							{/snippet}
+						</ContextMenu.Trigger>
+						<ContextMenu.Content class="w-44">
+							<ContextMenu.Item onSelect={() => goto(`/clients/${client.id}`)}>
+								Ouvrir la fiche
+							</ContextMenu.Item>
+							<ContextMenu.Item
+								onSelect={() => {
+									rdvClientId = client.id;
+									rdvDialogOpen = true;
+								}}
+							>
+								Nouveau RDV
+							</ContextMenu.Item>
+						</ContextMenu.Content>
+					</ContextMenu.Root>
 				{/each}
 			</Table.Body>
 		</Table.Root>
@@ -134,3 +158,16 @@
 		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>
+
+<RdvDialog
+	open={rdvDialogOpen}
+	presetClientId={rdvClientId}
+	onClose={() => {
+		rdvDialogOpen = false;
+		rdvClientId = undefined;
+	}}
+	onSaved={() => {
+		rdvDialogOpen = false;
+		rdvClientId = undefined;
+	}}
+/>

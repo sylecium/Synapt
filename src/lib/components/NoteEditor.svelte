@@ -1,8 +1,9 @@
 <script lang="ts">
-	import { untrack, type Snippet } from 'svelte';
+	import { onMount, type Snippet } from 'svelte';
 	import { Editor } from '@tiptap/core';
 	import StarterKit from '@tiptap/starter-kit';
 	import { TableKit } from '@tiptap/extension-table';
+	import Underline from '@tiptap/extension-underline';
 	import BoldIcon from '@lucide/svelte/icons/bold';
 	import ItalicIcon from '@lucide/svelte/icons/italic';
 	import UnderlineIcon from '@lucide/svelte/icons/underline';
@@ -18,12 +19,14 @@
 		corps: string;
 		onChange: (html: string) => void;
 		leading?: Snippet;
+		variant?: 'full' | 'compact';
 	};
 
-	let { noteId, corps, onChange, leading }: Props = $props();
+	let { noteId, corps, onChange, leading, variant = 'full' }: Props = $props();
 
 	let host = $state<HTMLDivElement | null>(null);
-	let editor = $state<Editor | null>(null);
+	let instance: Editor | null = null;
+	let emit: (html: string) => void = () => {};
 	let active = $state({
 		bold: false,
 		italic: false,
@@ -31,6 +34,10 @@
 		bullet: false,
 		ordered: false,
 		heading: false
+	});
+
+	$effect.pre(() => {
+		emit = onChange;
 	});
 
 	function syncActive(ed: Editor) {
@@ -44,16 +51,18 @@
 		};
 	}
 
-	$effect(() => {
+	onMount(() => {
 		if (!host) return;
 		void noteId;
-		const html = untrack(() => noteToEditorContent(corps));
+		const html = noteToEditorContent(corps);
+		const compact = variant === 'compact';
 		const ed = new Editor({
 			element: host,
 			extensions: [
 				StarterKit.configure({
 					link: { openOnClick: false }
 				}),
+				Underline,
 				TableKit.configure({
 					table: { resizable: false }
 				})
@@ -61,30 +70,34 @@
 			content: html,
 			editorProps: {
 				attributes: {
-			class: 'note-editor min-h-full px-8 py-5 text-[17px] leading-relaxed outline-none'
+					class: compact
+						? 'note-editor min-h-32 px-3 py-2 text-sm leading-relaxed outline-none'
+						: 'note-editor min-h-full px-8 py-5 text-[17px] leading-relaxed outline-none'
 				}
 			},
 			onUpdate: ({ editor: next }) => {
-				onChange(next.getHTML());
+				emit(next.getHTML());
 				syncActive(next);
 			},
 			onSelectionUpdate: ({ editor: next }) => {
 				syncActive(next);
 			}
 		});
-		editor = ed;
+		instance = ed;
 		syncActive(ed);
-		queueMicrotask(() => ed.commands.focus('end'));
+		if (!compact) {
+			queueMicrotask(() => ed.commands.focus('end'));
+		}
 		return () => {
 			ed.destroy();
-			if (editor === ed) editor = null;
+			if (instance === ed) instance = null;
 		};
 	});
 
 	function run(fn: (ed: Editor) => void) {
-		if (!editor) return;
-		fn(editor);
-		syncActive(editor);
+		if (!instance) return;
+		fn(instance);
+		syncActive(instance);
 	}
 
 	function toolClass(on: boolean) {
@@ -97,7 +110,7 @@
 	}
 </script>
 
-<div class="flex min-h-0 flex-1 flex-col">
+<div class={cn('flex min-h-0 flex-col', variant === 'full' && 'flex-1')}>
 	<div class="flex items-center gap-1 px-2 py-1.5">
 		{#if leading}
 			{@render leading()}
@@ -171,7 +184,12 @@
 		</div>
 	</div>
 
-	<div class="min-h-0 flex-1 overflow-y-auto">
-		<div bind:this={host} class="h-full"></div>
+	<div
+		class={cn(
+			'min-h-0 overflow-y-auto',
+			variant === 'full' ? 'flex-1' : 'max-h-64 rounded-md border'
+		)}
+	>
+		<div bind:this={host} class={variant === 'full' ? 'h-full' : ''}></div>
 	</div>
 </div>

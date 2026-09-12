@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
-	import { openUrl } from '@tauri-apps/plugin-opener';
 	import { clientsList, rdvDashboard, rdvList, settingsGet, tarifsList } from '$lib/api';
 	import { nextRdv, remainingRdvs } from '$lib/dashboardStats';
 	import { userMessage } from '$lib/errors';
@@ -15,10 +14,12 @@
 	} from '$lib/format';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
+	import RdvContextMenu from '$lib/components/RdvContextMenu.svelte';
 	import RdvDialog from '$lib/components/RdvDialog.svelte';
 	import RdvPanel from '$lib/components/RdvPanel.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
+	import { openJitsi } from '$lib/rdvActions';
 
 	let dashboard = $state<Dashboard | null>(null);
 	let settings = $state<SettingsPublic | null>(null);
@@ -81,14 +82,6 @@
 	function openPanel(rdv: Rdv) {
 		panelRdvId = rdv.id;
 		panelOpen = true;
-	}
-
-	async function openLink(url: string) {
-		try {
-			await openUrl(url);
-		} catch (e) {
-			toast.error(userMessage(e));
-		}
 	}
 
 	function onRdvSaved(_result: RdvCreateResult) {
@@ -179,32 +172,36 @@
 		{#if prochain}
 			<section class="flex flex-col gap-2">
 				<h2 class="text-xs font-medium tracking-wide text-muted-foreground uppercase">Prochain</h2>
-				<div class="flex items-center gap-3 rounded-lg border px-4 py-3">
-					<button
-						type="button"
-						class="flex min-w-0 flex-1 items-center gap-4 text-left"
-						onclick={() => openPanel(prochain)}
-					>
-						<span class="font-mono text-xl tabular-nums tracking-tight">
-							{prochainHoraire(prochain)}
-						</span>
-						<span class="min-w-0">
-							<span class="block truncate font-medium">{prochain.client_nom}</span>
-							<span class="text-muted-foreground block truncate text-sm">
-								{prochain.tarif_nom || '—'} · {prochain.duree_minutes} min
-							</span>
-						</span>
-					</button>
-					<Button
-						size="sm"
-						onclick={(e) => {
-							e.stopPropagation();
-							openLink(prochain.jitsi_url);
-						}}
-					>
-						Jitsi
-					</Button>
-				</div>
+				<RdvContextMenu rdv={prochain} onOpen={() => openPanel(prochain)} onUpdated={reload}>
+					{#snippet children(props)}
+						<div {...props} class="flex items-center gap-3 rounded-lg border px-4 py-3">
+							<button
+								type="button"
+								class="flex min-w-0 flex-1 items-center gap-4 text-left"
+								onclick={() => openPanel(prochain)}
+							>
+								<span class="font-mono text-xl tabular-nums tracking-tight">
+									{prochainHoraire(prochain)}
+								</span>
+								<span class="min-w-0">
+									<span class="block truncate font-medium">{prochain.client_nom}</span>
+									<span class="text-muted-foreground block truncate text-sm">
+										{prochain.tarif_nom || '—'} · {prochain.duree_minutes} min
+									</span>
+								</span>
+							</button>
+							<Button
+								size="sm"
+								onclick={(e) => {
+									e.stopPropagation();
+									void openJitsi(prochain);
+								}}
+							>
+								Jitsi
+							</Button>
+						</div>
+					{/snippet}
+				</RdvContextMenu>
 			</section>
 		{/if}
 
@@ -215,25 +212,31 @@
 			{#if dashboard.aujourdhui.length}
 				<ul class="divide-y rounded-lg border">
 					{#each dashboard.aujourdhui as rdv (rdv.id)}
-						<li class="flex items-center gap-x-4 px-4 py-3">
-							<button
-								type="button"
-								class="flex min-w-0 flex-1 items-center gap-x-4 text-left"
-								onclick={() => openPanel(rdv)}
-							>
-								<span class="w-14 font-mono tabular-nums">{formatTime(rdv.debut)}</span>
-								<span>{rdv.client_nom}</span>
-								<span class="text-muted-foreground text-sm">{rdv.tarif_nom || '—'}</span>
-							</button>
-							<Button
-								size="sm"
-								onclick={(e) => {
-									e.stopPropagation();
-									openLink(rdv.jitsi_url);
-								}}
-							>
-								Jitsi
-							</Button>
+						<li>
+							<RdvContextMenu {rdv} onOpen={() => openPanel(rdv)} onUpdated={reload}>
+								{#snippet children(props)}
+									<div {...props} class="flex items-center gap-x-4 px-4 py-3">
+										<button
+											type="button"
+											class="flex min-w-0 flex-1 items-center gap-x-4 text-left"
+											onclick={() => openPanel(rdv)}
+										>
+											<span class="w-14 font-mono tabular-nums">{formatTime(rdv.debut)}</span>
+											<span>{rdv.client_nom}</span>
+											<span class="text-muted-foreground text-sm">{rdv.tarif_nom || '—'}</span>
+										</button>
+										<Button
+											size="sm"
+											onclick={(e) => {
+												e.stopPropagation();
+												void openJitsi(rdv);
+											}}
+										>
+											Jitsi
+										</Button>
+									</div>
+								{/snippet}
+							</RdvContextMenu>
 						</li>
 					{/each}
 				</ul>
@@ -255,17 +258,22 @@
 				<ul class="divide-y rounded-lg border">
 					{#each dashboard.a_venir as rdv (rdv.id)}
 						<li>
-							<button
-								type="button"
-								class="flex w-full items-center gap-x-4 px-4 py-3 text-left text-sm"
-								onclick={() => openPanel(rdv)}
-							>
-								<span class="text-muted-foreground w-36 font-mono tabular-nums">
-									{formatDateTime(rdv.debut)}
-								</span>
-								<span>{rdv.client_nom}</span>
-								<span class="text-muted-foreground">{rdv.tarif_nom || '—'}</span>
-							</button>
+							<RdvContextMenu {rdv} onOpen={() => openPanel(rdv)} onUpdated={reload}>
+								{#snippet children(props)}
+									<button
+										{...props}
+										type="button"
+										class="flex w-full items-center gap-x-4 px-4 py-3 text-left text-sm"
+										onclick={() => openPanel(rdv)}
+									>
+										<span class="text-muted-foreground w-36 font-mono tabular-nums">
+											{formatDateTime(rdv.debut)}
+										</span>
+										<span>{rdv.client_nom}</span>
+										<span class="text-muted-foreground">{rdv.tarif_nom || '—'}</span>
+									</button>
+								{/snippet}
+							</RdvContextMenu>
 						</li>
 					{/each}
 				</ul>

@@ -183,6 +183,7 @@
 			focusDay={selectedDay}
 			{onSlot}
 			{onRdv}
+			onUpdated={loadRdvs}
 		/>
 	{/if}
 </div>

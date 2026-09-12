@@ -12,6 +12,7 @@
 	import NoteEditor from '$lib/components/NoteEditor.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
+	import * as ContextMenu from '$lib/components/ui/context-menu/index.js';
 	import { cn } from '$lib/utils.js';
 
 	let notes = $state<Note[]>([]);
@@ -100,21 +101,26 @@
 		}
 	}
 
-	async function removeSelected() {
-		if (!selected) return;
-		const id = selected.id;
-		if (saveTimer) {
-			clearTimeout(saveTimer);
-			saveTimer = null;
+	async function removeNote(id: string) {
+		if (selected?.id === id) {
+			if (saveTimer) {
+				clearTimeout(saveTimer);
+				saveTimer = null;
+			}
+			pendingId = null;
 		}
-		pendingId = null;
 		try {
 			await notesDelete(id);
 			notes = notes.filter((n) => n.id !== id);
-			selectedId = notes[0]?.id ?? null;
+			if (selectedId === id) selectedId = notes[0]?.id ?? null;
 		} catch (e) {
 			toast.error(userMessage(e));
 		}
+	}
+
+	async function removeSelected() {
+		if (!selected) return;
+		await removeNote(selected.id);
 	}
 </script>
 
@@ -158,29 +164,44 @@
 					{#each filtered as note (note.id)}
 						{@const isSelected = note.id === selectedId}
 						<li>
-							<button
-								type="button"
-								class={cn(
-									'w-full rounded-md px-2.5 py-2 text-left transition-colors',
-									isSelected
-										? 'bg-primary text-primary-foreground'
-										: 'hover:bg-muted/70'
-								)}
-								onclick={() => selectNote(note.id)}
-							>
-								<p class="truncate text-sm font-medium">{noteTitle(note.corps)}</p>
-								<p
-									class={cn(
-										'mt-0.5 truncate text-xs',
-										isSelected ? 'text-primary-foreground/75' : 'text-muted-foreground'
-									)}
-								>
-									<span class="font-mono">{formatNoteListDate(note.updated_at)}</span>
-									{#if notePreview(note.corps)}
-										<span> {notePreview(note.corps)}</span>
-									{/if}
-								</p>
-							</button>
+							<ContextMenu.Root>
+								<ContextMenu.Trigger>
+									{#snippet child({ props })}
+										<button
+											{...props}
+											type="button"
+											class={cn(
+												'w-full rounded-md px-2.5 py-2 text-left transition-colors',
+												isSelected
+													? 'bg-primary text-primary-foreground'
+													: 'hover:bg-muted/70'
+											)}
+											onclick={() => selectNote(note.id)}
+										>
+											<p class="truncate text-sm font-medium">{noteTitle(note.corps)}</p>
+											<p
+												class={cn(
+													'mt-0.5 truncate text-xs',
+													isSelected ? 'text-primary-foreground/75' : 'text-muted-foreground'
+												)}
+											>
+												<span class="font-mono">{formatNoteListDate(note.updated_at)}</span>
+												{#if notePreview(note.corps)}
+													<span> {notePreview(note.corps)}</span>
+												{/if}
+											</p>
+										</button>
+									{/snippet}
+								</ContextMenu.Trigger>
+								<ContextMenu.Content class="w-44">
+									<ContextMenu.Item
+										variant="destructive"
+										onSelect={() => removeNote(note.id)}
+									>
+										Supprimer
+									</ContextMenu.Item>
+								</ContextMenu.Content>
+							</ContextMenu.Root>
 						</li>
 					{/each}
 				</ul>

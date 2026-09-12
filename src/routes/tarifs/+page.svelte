@@ -14,6 +14,7 @@
 	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
+	import * as ContextMenu from '$lib/components/ui/context-menu/index.js';
 
 	let tarifs = $state<Tarif[]>([]);
 	let dialogOpen = $state(false);
@@ -107,58 +108,77 @@
 			</Table.Header>
 			<Table.Body>
 				{#each tarifs as tarif (tarif.id)}
-					<Table.Row
-						class="hover:bg-muted/50 cursor-pointer"
-						onclick={() => openEdit(tarif)}
-					>
-						<Table.Cell>{tarif.nom}</Table.Cell>
-						<Table.Cell class="font-mono tabular-nums">{tarif.duree_minutes} min</Table.Cell>
-						<Table.Cell class="font-mono tabular-nums">{formatCentimes(tarif.prix_centimes)}</Table.Cell>
-						<Table.Cell>
-							{#if tarif.actif}
-								<Badge>Actif</Badge>
-							{:else}
-								<Badge variant="secondary">Inactif</Badge>
-							{/if}
-						</Table.Cell>
-						<Table.Cell class="text-right">
-							<div class="flex justify-end gap-2">
-								<Button
-									variant="outline"
-									size="sm"
-									onclick={(e) => {
-										e.stopPropagation();
-										openEdit(tarif);
-									}}
+					<ContextMenu.Root>
+						<ContextMenu.Trigger>
+							{#snippet child({ props })}
+								<Table.Row
+									{...props}
+									class="hover:bg-muted/50 cursor-pointer"
+									onclick={() => openEdit(tarif)}
 								>
-									Modifier
-								</Button>
-								{#if tarif.actif}
-									<Button
-										variant="outline"
-										size="sm"
-										onclick={(e) => {
-											e.stopPropagation();
-											setActif(tarif.id, false);
-										}}
-									>
-										Désactiver
-									</Button>
-								{:else}
-									<Button
-										variant="outline"
-										size="sm"
-										onclick={(e) => {
-											e.stopPropagation();
-											setActif(tarif.id, true);
-										}}
-									>
-										Réactiver
-									</Button>
-								{/if}
-							</div>
-						</Table.Cell>
-					</Table.Row>
+									<Table.Cell>{tarif.nom}</Table.Cell>
+									<Table.Cell class="font-mono tabular-nums">{tarif.duree_minutes} min</Table.Cell>
+									<Table.Cell class="font-mono tabular-nums">{formatCentimes(tarif.prix_centimes)}</Table.Cell>
+									<Table.Cell>
+										{#if tarif.actif}
+											<Badge>Actif</Badge>
+										{:else}
+											<Badge variant="secondary">Inactif</Badge>
+										{/if}
+									</Table.Cell>
+									<Table.Cell class="text-right">
+										<div class="flex justify-end gap-2">
+											<Button
+												variant="outline"
+												size="sm"
+												onclick={(e) => {
+													e.stopPropagation();
+													openEdit(tarif);
+												}}
+											>
+												Modifier
+											</Button>
+											{#if tarif.actif}
+												<Button
+													variant="outline"
+													size="sm"
+													onclick={(e) => {
+														e.stopPropagation();
+														setActif(tarif.id, false);
+													}}
+												>
+													Désactiver
+												</Button>
+											{:else}
+												<Button
+													variant="outline"
+													size="sm"
+													onclick={(e) => {
+														e.stopPropagation();
+														setActif(tarif.id, true);
+													}}
+												>
+													Réactiver
+												</Button>
+											{/if}
+										</div>
+									</Table.Cell>
+								</Table.Row>
+							{/snippet}
+						</ContextMenu.Trigger>
+						<ContextMenu.Content class="w-44">
+							<ContextMenu.Item onSelect={() => openEdit(tarif)}>Modifier</ContextMenu.Item>
+							{#if tarif.actif}
+								<ContextMenu.Item onSelect={() => setActif(tarif.id, false)}>
+									Désactiver
+								</ContextMenu.Item>
+							{:else}
+								<ContextMenu.Item onSelect={() => setActif(tarif.id, true)}>
+									Réactiver
+								</ContextMenu.Item>
+							{/if}
+						</ContextMenu.Content>
+					</ContextMenu.Root>
 				{/each}
 			</Table.Body>
 		</Table.Root>

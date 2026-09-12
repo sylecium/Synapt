@@ -16,6 +16,10 @@ export function notePlainText(corps: string): string {
 		.trim();
 }
 
+export function noteIsEmpty(corps: string | null | undefined): boolean {
+	return !notePlainText(corps ?? '');
+}
+
 export function noteTitle(corps: string): string {
 	const line = notePlainText(corps).split('\n').find((l) => l.trim());
 	return line?.trim() || 'Nouvelle note';

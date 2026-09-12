@@ -1,18 +1,29 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { toast } from 'svelte-sonner';
-	import { clientsGet, clientsUpsert, notesList, notesUpsert, rdvList } from '$lib/api';
+	import Trash2Icon from '@lucide/svelte/icons/trash-2';
+	import {
+		clientsGet,
+		clientsUpsert,
+		notesDelete,
+		notesList,
+		notesUpsert,
+		rdvList
+	} from '$lib/api';
 	import { userMessage } from '$lib/errors';
 	import type { Client, Note, Rdv } from '$lib/types';
-	import { formatDateTime } from '$lib/format';
+	import { formatDateTime, formatNoteListDate } from '$lib/format';
+	import { noteTitle } from '$lib/notesHtml';
+	import NoteEditor from '$lib/components/NoteEditor.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
+	import RdvContextMenu from '$lib/components/RdvContextMenu.svelte';
 	import RdvDialog from '$lib/components/RdvDialog.svelte';
 	import RdvPanel from '$lib/components/RdvPanel.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
-	import { Textarea } from '$lib/components/ui/textarea/index.js';
+	import * as ContextMenu from '$lib/components/ui/context-menu/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
 
 	const clientId = $derived(page.params.id!);
@@ -28,7 +39,9 @@
 	let rdvDialogOpen = $state(false);
 	let panelOpen = $state(false);
 	let panelRdvId = $state<string | null>(null);
-	let newNoteCorps = $state('');
+	let editingId = $state<string | null>(null);
+	let saveTimer: ReturnType<typeof setTimeout> | null = null;
+	let pendingId: string | null = null;
 
 	$effect(() => {
 		const id = clientId;
@@ -38,6 +51,8 @@
 		})();
 		return () => {
 			cancelled = true;
+			if (saveTimer) clearTimeout(saveTimer);
+			void flushSave();
 		};
 	});
 
@@ -49,7 +64,6 @@
 			nom = c.nom;
 			email = c.email ?? '';
 			telephone = c.telephone ?? '';
-			newNoteCorps = '';
 			const [n, r] = await Promise.all([
 				notesList({ client_id: id }),
 				rdvList({ client_id: id })
@@ -57,6 +71,9 @@
 			if (isCancelled()) return;
 			notes = n;
 			rdvs = r;
+			if (editingId && !n.some((note) => note.id === editingId)) {
+				editingId = n[0]?.id ?? null;
+			}
 		} catch (e) {
 			if (!isCancelled()) toast.error(userMessage(e));
 		} finally {
@@ -82,22 +99,71 @@
 		}
 	}
 
-	async function saveNote(note: Note) {
+	async function flushSave() {
+		if (saveTimer) {
+			clearTimeout(saveTimer);
+			saveTimer = null;
+		}
+		const id = pendingId;
+		if (!id) return;
+		const note = notes.find((n) => n.id === id);
+		pendingId = null;
+		if (!note) return;
 		try {
-			await notesUpsert({ id: note.id, client_id: clientId, corps: note.corps });
-			toast.success('Note enregistrée');
+			const saved = await notesUpsert({
+				id: note.id,
+				client_id: clientId,
+				corps: note.corps
+			});
+			note.updated_at = saved.updated_at;
+			notes = [note, ...notes.filter((n) => n.id !== note.id)];
 		} catch (e) {
 			toast.error(userMessage(e));
 		}
 	}
 
-	async function addNote() {
-		if (!newNoteCorps.trim()) return;
+	function scheduleSave(note: Note) {
+		pendingId = note.id;
+		if (saveTimer) clearTimeout(saveTimer);
+		saveTimer = setTimeout(() => {
+			void flushSave();
+		}, 400);
+	}
+
+	function onHtml(html: string) {
+		const note = notes.find((n) => n.id === editingId);
+		if (!note) return;
+		note.corps = html;
+		scheduleSave(note);
+	}
+
+	async function expandNote(id: string) {
+		if (id === editingId) return;
+		await flushSave();
+		editingId = id;
+	}
+
+	async function createNote() {
+		await flushSave();
 		try {
-			const note = await notesUpsert({ client_id: clientId, corps: newNoteCorps.trim() });
-			notes = [...notes, note];
-			newNoteCorps = '';
-			toast.success('Note ajoutée');
+			const note = await notesUpsert({ client_id: clientId, corps: '' });
+			notes = [note, ...notes];
+			editingId = note.id;
+		} catch (e) {
+			toast.error(userMessage(e));
+		}
+	}
+
+	async function removeNote(id: string) {
+		if (saveTimer && pendingId === id) {
+			clearTimeout(saveTimer);
+			saveTimer = null;
+			pendingId = null;
+		}
+		try {
+			await notesDelete(id);
+			notes = notes.filter((n) => n.id !== id);
+			if (editingId === id) editingId = notes[0]?.id ?? null;
 		} catch (e) {
 			toast.error(userMessage(e));
 		}
@@ -140,24 +206,76 @@
 			<Button onclick={saveClient} disabled={saving}>Enregistrer</Button>
 		</section>
 
-		<section class="flex flex-col gap-4">
-			<h2 class="text-sm font-medium">Notes</h2>
+		<section class="flex max-w-2xl flex-col gap-3">
+			<div class="flex items-center justify-between gap-2">
+				<h2 class="text-sm font-medium">Notes</h2>
+				<Button variant="outline" size="sm" onclick={createNote}>Nouvelle note</Button>
+			</div>
 			{#if notes.length === 0}
 				<p class="text-muted-foreground text-sm">Aucune note client.</p>
 			{:else}
-				{#each notes as note (note.id)}
-					<div class="flex flex-col gap-2">
-						<Textarea bind:value={note.corps} />
-						<Button variant="outline" size="sm" class="self-start" onclick={() => saveNote(note)}>
-							Enregistrer
-						</Button>
-					</div>
-				{/each}
+				<ul class="divide-y rounded-lg border">
+					{#each notes as note (note.id)}
+						<li>
+							{#if editingId === note.id}
+								<div class="p-2">
+									<div class="flex items-center justify-between px-2 pb-1">
+										<p class="text-muted-foreground font-mono text-xs">
+											{formatNoteListDate(note.updated_at)}
+										</p>
+									</div>
+									{#key note.id}
+										<NoteEditor
+											noteId={note.id}
+											corps={note.corps}
+											variant="compact"
+											onChange={onHtml}
+										>
+											{#snippet leading()}
+												<Button
+													variant="ghost"
+													size="icon"
+													class="size-7"
+													onclick={() => removeNote(note.id)}
+													aria-label="Supprimer la note"
+												>
+													<Trash2Icon />
+												</Button>
+											{/snippet}
+										</NoteEditor>
+									{/key}
+								</div>
+							{:else}
+								<ContextMenu.Root>
+									<ContextMenu.Trigger>
+										{#snippet child({ props })}
+											<button
+												{...props}
+												type="button"
+												class="w-full px-3 py-2.5 text-left hover:bg-muted/50"
+												onclick={() => expandNote(note.id)}
+											>
+												<p class="truncate text-sm font-medium">{noteTitle(note.corps)}</p>
+												<p class="text-muted-foreground mt-0.5 font-mono text-xs">
+													{formatNoteListDate(note.updated_at)}
+												</p>
+											</button>
+										{/snippet}
+									</ContextMenu.Trigger>
+									<ContextMenu.Content class="w-44">
+										<ContextMenu.Item
+											variant="destructive"
+											onSelect={() => removeNote(note.id)}
+										>
+											Supprimer
+										</ContextMenu.Item>
+									</ContextMenu.Content>
+								</ContextMenu.Root>
+							{/if}
+						</li>
+					{/each}
+				</ul>
 			{/if}
-			<div class="flex flex-col gap-2">
-				<Textarea placeholder="Nouvelle note…" bind:value={newNoteCorps} />
-				<Button variant="outline" size="sm" class="self-start" onclick={addNote}>Ajouter</Button>
-			</div>
 		</section>
 
 		<section class="flex flex-col gap-4">
@@ -172,11 +290,15 @@
 				</Table.Header>
 				<Table.Body>
 					{#each rdvs as rdv (rdv.id)}
-						<Table.Row class="cursor-pointer" onclick={() => openPanel(rdv)}>
-							<Table.Cell>{formatDateTime(rdv.debut)}</Table.Cell>
-							<Table.Cell>{rdv.tarif_nom || '—'}</Table.Cell>
-							<Table.Cell>{rdv.duree_minutes} min</Table.Cell>
-						</Table.Row>
+						<RdvContextMenu rdv={rdv} onOpen={() => openPanel(rdv)} onUpdated={() => load(clientId)}>
+							{#snippet children(props)}
+								<Table.Row class="cursor-pointer" {...props} onclick={() => openPanel(rdv)}>
+									<Table.Cell>{formatDateTime(rdv.debut)}</Table.Cell>
+									<Table.Cell>{rdv.tarif_nom || '—'}</Table.Cell>
+									<Table.Cell>{rdv.duree_minutes} min</Table.Cell>
+								</Table.Row>
+							{/snippet}
+						</RdvContextMenu>
 					{:else}
 						<Table.Row>
 							<Table.Cell colspan={3} class="text-muted-foreground">Aucun RDV</Table.Cell>

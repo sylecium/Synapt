@@ -1,15 +1,25 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
-	import { openUrl } from '@tauri-apps/plugin-opener';
-	import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 	import CopyIcon from '@lucide/svelte/icons/copy';
 	import VideoIcon from '@lucide/svelte/icons/video';
 	import BanknoteIcon from '@lucide/svelte/icons/banknote';
-	import { rdvAnnuler, rdvGet, settingsGet, stripeEnsureLink, tarifsList } from '$lib/api';
+	import { rdvGet, rdvUpdate, settingsGet, tarifsList } from '$lib/api';
 	import type { RappelNtfy, Rdv, RdvDetail, SettingsPublic, Tarif } from '$lib/types';
 	import { formatCentimes, formatTime } from '$lib/format';
+	import { noteIsEmpty } from '$lib/notesHtml';
 	import { userMessage } from '$lib/errors';
+	import {
+		cancelRdv as cancelRdvAction,
+		copyJitsi,
+		copyStripe as copyStripeAction,
+		openJitsi,
+		openStripe as openStripeAction,
+		stripeBlockedReason
+	} from '$lib/rdvActions';
+	import NoteEditor from '$lib/components/NoteEditor.svelte';
+	import NoteHtml from '$lib/components/NoteHtml.svelte';
+	import RdvContextMenu from '$lib/components/RdvContextMenu.svelte';
 	import RdvDialog from '$lib/components/RdvDialog.svelte';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -32,25 +42,14 @@
 	let editOpen = $state(false);
 	let cancelling = $state(false);
 	let stripeBusy = $state(false);
+	let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
 	const rdv = $derived(detail?.rdv ?? null);
 	const rappels = $derived(detail?.rappels ?? []);
 	const cancelled = $derived(rdv?.statut === 'annule');
 	const tarif = $derived(tarifs.find((t) => t.id === rdv?.tarif_id) ?? null);
-	const stripeDisabled = $derived.by(() => {
-		if (!rdv) return true;
-		if (rdv.stripe_url) return false;
-		if (!settings?.stripe_configured) return true;
-		if (!rdv.tarif_id) return true;
-		return !tarif || tarif.prix_centimes === 0;
-	});
-	const stripeHint = $derived.by(() => {
-		if (!rdv || rdv.stripe_url) return '';
-		if (!settings?.stripe_configured) return "Stripe n'est pas configuré.";
-		if (!rdv.tarif_id) return 'Ajoutez un tarif pour demander un paiement.';
-		if (tarif && tarif.prix_centimes === 0) return 'Ce tarif est à 0 €.';
-		return '';
-	});
+	const stripeHint = $derived(rdv ? stripeBlockedReason(rdv, settings, tarifs) : '');
+	const stripeDisabled = $derived(!rdv || (!rdv.stripe_url && !!stripeHint));
 	const dateLabel = $derived(rdv ? formatLongDate(rdv.debut) : '');
 	const timeSpan = $derived(
 		rdv ? `${formatTime(rdv.debut)} – ${endTime(rdv.debut, rdv.duree_minutes)}` : ''
@@ -60,6 +59,7 @@
 		if (open && rdvId) {
 			loadDetail(rdvId);
 		} else if (!open) {
+			if (saveTimer) clearTimeout(saveTimer);
 			detail = null;
 		}
 	});
@@ -99,65 +99,77 @@
 		if (!value) onClose();
 	}
 
-	async function copyUrl(url: string, label: string) {
-		try {
-			await writeText(url);
-			toast.success(`${label} copié`);
-		} catch (e) {
-			toast.error(userMessage(e));
-		}
+	function applyRdv(updated: Rdv) {
+		detail = detail ? { ...detail, rdv: updated } : { rdv: updated, rappels: [] };
 	}
 
-	async function openLink(url: string) {
-		try {
-			await openUrl(url);
-		} catch (e) {
-			toast.error(userMessage(e));
-		}
-	}
-
-	async function ensureStripeLink(current: Rdv): Promise<Rdv> {
-		if (current.stripe_url) return current;
+	async function copyStripe() {
+		if (!rdv) return;
 		stripeBusy = true;
 		try {
-			const updated = await stripeEnsureLink(current.id);
-			detail = detail ? { ...detail, rdv: updated } : { rdv: updated, rappels: [] };
-			return updated;
-		} catch (e) {
-			toast.error(userMessage(e));
-			throw e;
+			const next = await copyStripeAction(rdv);
+			if (next) applyRdv(next);
 		} finally {
 			stripeBusy = false;
 		}
 	}
 
-	async function copyStripe() {
-		if (!rdv) return;
-		const current = await ensureStripeLink(rdv);
-		if (current.stripe_url) await copyUrl(current.stripe_url, 'Lien de paiement');
-	}
-
 	async function openStripe() {
 		if (!rdv) return;
-		const current = await ensureStripeLink(rdv);
-		if (current.stripe_url) await openLink(current.stripe_url);
+		stripeBusy = true;
+		try {
+			const next = await openStripeAction(rdv);
+			if (next) applyRdv(next);
+		} finally {
+			stripeBusy = false;
+		}
 	}
 
 	async function cancelRdv() {
 		if (!rdv) return;
 		cancelling = true;
 		try {
-			const result = await rdvAnnuler(rdv.id);
-			for (const w of result.warnings) {
-				toast.error(userMessage(w));
-			}
-			toast.success('RDV annulé');
+			await cancelRdvAction(rdv.id);
 			open = false;
 			onUpdated();
 		} catch (e) {
 			toast.error(userMessage(e));
 		} finally {
 			cancelling = false;
+		}
+	}
+
+	function onNoteHtml(html: string) {
+		if (!detail) return;
+		detail = {
+			...detail,
+			rdv: { ...detail.rdv, note: noteIsEmpty(html) ? null : html }
+		};
+		if (saveTimer) clearTimeout(saveTimer);
+		saveTimer = setTimeout(() => {
+			void flushNote();
+		}, 400);
+	}
+
+	async function flushNote() {
+		if (saveTimer) {
+			clearTimeout(saveTimer);
+			saveTimer = null;
+		}
+		const current = rdv;
+		if (!current || current.statut === 'annule') return;
+		try {
+			const result = await rdvUpdate({
+				id: current.id,
+				client_id: current.client_id,
+				tarif_id: current.tarif_id,
+				debut: current.debut,
+				duree_minutes: current.duree_minutes,
+				note: current.note
+			});
+			applyRdv(result.rdv);
+		} catch (e) {
+			toast.error(userMessage(e));
 		}
 	}
 
@@ -186,21 +198,35 @@
 				<Skeleton class="h-24" />
 			</div>
 		{:else if rdv}
-			<Sheet.Header class="gap-2 pr-12 pb-4">
-				<div class="flex items-start justify-between gap-3">
-					<Sheet.Title class="text-xl font-medium tracking-tight">
-						<a href="/clients/{rdv.client_id}" class="hover:underline">
-							{rdv.client_nom}
-						</a>
-					</Sheet.Title>
-					<Badge variant={cancelled ? 'destructive' : 'secondary'} class="mt-0.5">
-						{cancelled ? 'Annulé' : 'Planifié'}
-					</Badge>
-				</div>
-				<Sheet.Description class="text-muted-foreground text-sm capitalize">
-					{dateLabel}
-				</Sheet.Description>
-			</Sheet.Header>
+			<RdvContextMenu
+				{rdv}
+				showOpen={false}
+				onOpen={() => {}}
+				onUpdated={() => {
+					if (rdvId) loadDetail(rdvId);
+					onUpdated();
+				}}
+			>
+				{#snippet children(props)}
+					<div {...props}>
+						<Sheet.Header class="gap-2 pr-12 pb-4">
+							<div class="flex items-start justify-between gap-3">
+								<Sheet.Title class="text-xl font-medium tracking-tight">
+									<a href="/clients/{rdv.client_id}" class="hover:underline">
+										{rdv.client_nom}
+									</a>
+								</Sheet.Title>
+								<Badge variant={cancelled ? 'destructive' : 'secondary'} class="mt-0.5">
+									{cancelled ? 'Annulé' : 'Planifié'}
+								</Badge>
+							</div>
+							<Sheet.Description class="text-muted-foreground text-sm capitalize">
+								{dateLabel}
+							</Sheet.Description>
+						</Sheet.Header>
+					</div>
+				{/snippet}
+			</RdvContextMenu>
 
 			<div class="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-6 pb-4">
 				<div>
@@ -216,14 +242,27 @@
 					</p>
 				</div>
 
-				{#if rdv.note}
-					<div class="bg-muted/60 rounded-md px-3 py-2.5">
-						<p class="text-muted-foreground text-xs font-medium tracking-wide uppercase">
-							Note
-						</p>
-						<p class="mt-1 whitespace-pre-wrap leading-relaxed">{rdv.note}</p>
-					</div>
-				{/if}
+				<section class="flex flex-col gap-2">
+					<p class="text-muted-foreground text-xs font-medium tracking-wide uppercase">Note</p>
+					{#if cancelled}
+						{#if rdv.note}
+							<div class="bg-muted/60 rounded-md px-3 py-2.5">
+								<NoteHtml corps={rdv.note} />
+							</div>
+						{:else}
+							<p class="text-muted-foreground text-sm">Aucune note.</p>
+						{/if}
+					{:else}
+						{#key rdv.id}
+							<NoteEditor
+								noteId={rdv.id}
+								corps={rdv.note ?? ''}
+								variant="compact"
+								onChange={onNoteHtml}
+							/>
+						{/key}
+					{/if}
+				</section>
 
 				{#if !cancelled}
 					<section class="flex flex-col gap-2">
@@ -231,15 +270,11 @@
 							Visio
 						</p>
 						<div class="grid grid-cols-2 gap-2">
-							<Button class="w-full" onclick={() => openLink(rdv.jitsi_url)}>
+							<Button class="w-full" onclick={() => openJitsi(rdv)}>
 								<VideoIcon />
 								Ouvrir
 							</Button>
-							<Button
-								variant="outline"
-								class="w-full"
-								onclick={() => copyUrl(rdv.jitsi_url, 'Lien Jitsi')}
-							>
+							<Button variant="outline" class="w-full" onclick={() => copyJitsi(rdv)}>
 								<CopyIcon />
 								Copier
 							</Button>
@@ -258,7 +293,7 @@
 									variant="outline"
 									class="w-full"
 									onclick={openStripe}
-									disabled={stripeBusy}
+									disabled={stripeBusy || stripeDisabled}
 								>
 									<BanknoteIcon />
 									{rdv.stripe_url ? 'Ouvrir' : 'Créer'}
@@ -267,7 +302,7 @@
 									variant="outline"
 									class="w-full"
 									onclick={copyStripe}
-									disabled={stripeBusy}
+									disabled={stripeBusy || stripeDisabled}
 								>
 									<CopyIcon />
 									Copier

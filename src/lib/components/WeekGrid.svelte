@@ -1,6 +1,8 @@
 <script lang="ts">
 	import type { Rdv } from '$lib/types';
 	import { formatTime, sameLocalDay, slotUtcIso, weekDaysFromMonday } from '$lib/format';
+	import RdvContextMenu from '$lib/components/RdvContextMenu.svelte';
+	import * as ContextMenu from '$lib/components/ui/context-menu/index.js';
 
 	type Props = {
 		startMonday: Date;
@@ -9,9 +11,10 @@
 		focusDay?: Date;
 		onSlot: (isoUtc: string) => void;
 		onRdv: (r: Rdv) => void;
+		onUpdated?: () => void;
 	};
 
-	let { startMonday, rdvs, dayView = false, focusDay, onSlot, onRdv }: Props = $props();
+	let { startMonday, rdvs, dayView = false, focusDay, onSlot, onRdv, onUpdated }: Props = $props();
 
 	const GRID_START = 8 * 60;
 	const GRID_END = 20 * 60;
@@ -103,41 +106,62 @@
 					</div>
 					<div class="relative" style="height:{gridHeight}px">
 						{#each slots as slot, slotIndex (day.toISOString() + slotIndex)}
-							<button
-								type="button"
-								class="border-border hover:bg-muted/50 absolute inset-x-0 border-b"
-								style="top:{slotIndex * SLOT_HEIGHT}px;height:{SLOT_HEIGHT}px"
-								aria-label="{timeLabel(slot.hour, slot.minute)} {dayLabel(day)}"
-								onclick={() => onSlot(slotUtcIso(day, slot.hour, slot.minute))}
-							></button>
+							{@const iso = slotUtcIso(day, slot.hour, slot.minute)}
+							<ContextMenu.Root>
+								<ContextMenu.Trigger>
+									{#snippet child({ props })}
+										<button
+											{...props}
+											type="button"
+											class="border-border hover:bg-muted/50 absolute inset-x-0 border-b"
+											style="top:{slotIndex * SLOT_HEIGHT}px;height:{SLOT_HEIGHT}px"
+											aria-label="{timeLabel(slot.hour, slot.minute)} {dayLabel(day)}"
+											onclick={() => onSlot(iso)}
+										></button>
+									{/snippet}
+								</ContextMenu.Trigger>
+								<ContextMenu.Content class="w-44">
+									<ContextMenu.Item onSelect={() => onSlot(iso)}>Nouveau RDV</ContextMenu.Item>
+								</ContextMenu.Content>
+							</ContextMenu.Root>
 						{/each}
 						{#each rdvsForDay(day).filter(rdvInGrid) as rdv (rdv.id)}
-							<button
-								type="button"
-								class="bg-primary text-primary-foreground absolute inset-x-0.5 z-10 overflow-hidden rounded-md px-1 py-0.5 text-left text-xs hover:opacity-90"
-								style={rdvStyle(rdv)}
-								onclick={(e) => {
-									e.stopPropagation();
-									onRdv(rdv);
-								}}
-							>
-								<span class="font-medium">{rdv.client_nom}</span>
-								<span class="font-mono tabular-nums opacity-80">{formatTime(rdv.debut)}</span>
-							</button>
+							<RdvContextMenu {rdv} onOpen={() => onRdv(rdv)} {onUpdated}>
+								{#snippet children(props)}
+									<button
+										{...props}
+										type="button"
+										class="bg-primary text-primary-foreground absolute inset-x-0.5 z-10 overflow-hidden rounded-md px-1 py-0.5 text-left text-xs hover:opacity-90"
+										style={rdvStyle(rdv)}
+										onclick={(e) => {
+											e.stopPropagation();
+											onRdv(rdv);
+										}}
+									>
+										<span class="font-medium">{rdv.client_nom}</span>
+										<span class="font-mono tabular-nums opacity-80">{formatTime(rdv.debut)}</span>
+									</button>
+								{/snippet}
+							</RdvContextMenu>
 						{/each}
 					</div>
 					{#if rdvsOutsideForDay(day).length > 0}
 						<div class="flex flex-col gap-1 border-t px-1 py-2">
 							<p class="text-muted-foreground text-[10px] font-medium uppercase">Hors plage</p>
 							{#each rdvsOutsideForDay(day) as rdv (rdv.id)}
-								<button
-									type="button"
-									class="bg-warn-bg text-warn hover:opacity-90 rounded-md px-2 py-1 text-left text-xs"
-									onclick={() => onRdv(rdv)}
-								>
-									<span class="font-medium">{rdv.client_nom}</span>
-									<span class="ml-1 font-mono tabular-nums">{formatTime(rdv.debut)}</span>
-								</button>
+								<RdvContextMenu {rdv} onOpen={() => onRdv(rdv)} {onUpdated}>
+									{#snippet children(props)}
+										<button
+											{...props}
+											type="button"
+											class="bg-warn-bg text-warn hover:opacity-90 rounded-md px-2 py-1 text-left text-xs"
+											onclick={() => onRdv(rdv)}
+										>
+											<span class="font-medium">{rdv.client_nom}</span>
+											<span class="ml-1 font-mono tabular-nums">{formatTime(rdv.debut)}</span>
+										</button>
+									{/snippet}
+								</RdvContextMenu>
 							{/each}
 						</div>
 					{/if}
