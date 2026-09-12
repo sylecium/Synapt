@@ -9,11 +9,23 @@ pub mod overlap;
 pub mod settings;
 pub mod stripe;
 
+fn updater_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry, tauri_plugin_updater::Config> {
+    let mut builder = tauri_plugin_updater::Builder::new();
+    if let Some(token) = option_env!("SYNAPT_UPDATER_TOKEN") {
+        builder = builder
+            .header("Authorization", format!("Bearer {token}"))
+            .expect("en-tête Authorization updater");
+    }
+    builder.build()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(updater_plugin())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(

@@ -25,6 +25,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
       "icons/32x32.png",
@@ -35,6 +36,14 @@
     ],
     "android": {
       "debugApplicationIdSuffix": ".debug"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE5NzE3MzAwN0JCMkUyN0UKUldSKzRySjdBSE54cWZYSldCUXMyTFlKMHd0STdxTmg3MzVhUE1wUHJSZUhLaUJvK21VWWxXNGoK",
+      "endpoints": [
+        "https://github.com/sylecium/Synapt/releases/latest/download/latest.json"
+      ]
     }
   }
 }
