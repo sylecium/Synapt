@@ -4,6 +4,7 @@
 	import { Toaster } from '$lib/components/ui/sonner';
 	import * as Sidebar from '$lib/components/ui/sidebar/index.js';
 	import AppSidebar from '$lib/components/AppSidebar.svelte';
+	import UpdateBanner from '$lib/components/UpdateBanner.svelte';
 
 	let { children } = $props();
 </script>
@@ -15,6 +16,7 @@
 		<header class="flex h-10 shrink-0 items-center gap-2 border-b px-2">
 			<Sidebar.Trigger />
 		</header>
+		<UpdateBanner />
 		<div class="relative min-h-0 flex-1 overflow-auto">
 			{@render children()}
 		</div>
