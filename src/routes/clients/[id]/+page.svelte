@@ -2,6 +2,7 @@
 	import { page } from '$app/state';
 	import { toast } from 'svelte-sonner';
 	import { clientsGet, clientsUpsert, notesList, notesUpsert, rdvList } from '$lib/api';
+	import { userMessage } from '$lib/errors';
 	import type { Client, Note, Rdv } from '$lib/types';
 	import { formatDateTime } from '$lib/format';
 	import PageHeader from '$lib/components/PageHeader.svelte';
@@ -57,7 +58,7 @@
 			notes = n;
 			rdvs = r;
 		} catch (e) {
-			if (!isCancelled()) toast.error(String(e));
+			if (!isCancelled()) toast.error(userMessage(e));
 		} finally {
 			if (!isCancelled()) initial = false;
 		}
@@ -75,7 +76,7 @@
 			});
 			toast.success('Client enregistré');
 		} catch (e) {
-			toast.error(String(e));
+			toast.error(userMessage(e));
 		} finally {
 			saving = false;
 		}
@@ -86,7 +87,7 @@
 			await notesUpsert({ id: note.id, client_id: clientId, corps: note.corps });
 			toast.success('Note enregistrée');
 		} catch (e) {
-			toast.error(String(e));
+			toast.error(userMessage(e));
 		}
 	}
 
@@ -98,7 +99,7 @@
 			newNoteCorps = '';
 			toast.success('Note ajoutée');
 		} catch (e) {
-			toast.error(String(e));
+			toast.error(userMessage(e));
 		}
 	}
 

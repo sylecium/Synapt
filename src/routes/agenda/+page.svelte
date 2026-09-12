@@ -6,6 +6,7 @@
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
 	import { toast } from 'svelte-sonner';
 	import { rdvList } from '$lib/api';
+	import { userMessage } from '$lib/errors';
 	import type { Rdv, RdvCreateResult } from '$lib/types';
 	import {
 		addDays,
@@ -71,7 +72,7 @@
 			const { from, to } = weekBoundsUtc(weekStart);
 			rdvs = await rdvList({ from, to });
 		} catch (e) {
-			toast.error(String(e));
+			toast.error(userMessage(e));
 		} finally {
 			loading = false;
 		}

@@ -779,29 +779,29 @@ pub fn settings_apply(input: &SettingsSetInput, current: &Settings) -> Settings 
 
 // --- Tauri commands ---
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn settings_get() -> SettingsPublic {
     load_settings().to_public()
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn settings_set(input: SettingsSetInput) -> Result<(), String> {
     let current = load_settings();
     let updated = settings_apply(&input, &current);
     save_settings(&updated).map_err(|e| e.message)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn clients_list() -> Result<Vec<Client>, String> {
     with_db(repo::clients_list).map_err(|e| e.message)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn clients_get(id: String) -> Result<Client, String> {
     with_db(|conn| repo::clients_get(conn, &id)).map_err(|e| e.message)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn clients_upsert(
     id: Option<String>,
     nom: String,
@@ -820,12 +820,12 @@ pub fn clients_upsert(
     .map_err(|e| e.message)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn tarifs_list() -> Result<Vec<Tarif>, String> {
     with_db(repo::tarifs_list).map_err(|e| e.message)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn tarifs_upsert(
     id: Option<String>,
     nom: String,
@@ -836,17 +836,17 @@ pub fn tarifs_upsert(
         .map_err(|e| e.message)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn tarifs_set_actif(id: String, actif: bool) -> Result<Tarif, String> {
     with_db(|conn| repo::tarifs_set_actif(conn, &id, actif)).map_err(|e| e.message)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn notes_list(client_id: Option<String>, perso: bool) -> Result<Vec<Note>, String> {
     with_db(|conn| repo::notes_list(conn, client_id, perso)).map_err(|e| e.message)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn notes_upsert(
     id: Option<String>,
     client_id: Option<String>,
@@ -858,12 +858,12 @@ pub fn notes_upsert(
     .map_err(|e| e.message)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn notes_delete(id: String) -> Result<(), String> {
     with_db(|conn| repo::notes_delete(conn, &id)).map_err(|e| e.message)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn rdv_list(
     from: Option<String>,
     to: Option<String>,
@@ -880,12 +880,12 @@ pub fn rdv_list(
     .map_err(|e| e.message)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn rdv_get(id: String) -> Result<RdvDetail, String> {
     with_db(|conn| repo::rdv_get(conn, &id)).map_err(|e| e.message)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn rdv_create(
     client_id: String,
     tarif_id: Option<String>,
@@ -937,7 +937,7 @@ pub async fn rdv_create(
     Ok(RdvCreateResult { rdv, warnings })
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn rdv_update(
     id: String,
     client_id: String,
@@ -974,7 +974,7 @@ pub async fn rdv_update(
     Ok(RdvCreateResult { rdv, warnings })
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn rdv_annuler(id: String) -> Result<RdvCreateResult, String> {
     let settings = load_settings();
     let warnings = cancel_rappels_ntfy(&settings, &id).await;
@@ -982,12 +982,12 @@ pub async fn rdv_annuler(id: String) -> Result<RdvCreateResult, String> {
     Ok(RdvCreateResult { rdv, warnings })
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn rdv_dashboard() -> Result<Dashboard, String> {
     with_db(|conn| repo::rdv_dashboard(conn, Utc::now())).map_err(|e| e.message)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn stripe_ensure_link(rdv_id: String) -> Result<Rdv, String> {
     let settings = load_settings();
     let rdv = with_db(|conn| fetch_rdv(conn, &rdv_id)).map_err(|e| e.message)?;
@@ -1014,7 +1014,7 @@ pub async fn stripe_ensure_link(rdv_id: String) -> Result<Rdv, String> {
     Ok(rdv)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn ntfy_test() -> Result<(), String> {
     let settings = load_settings();
     crate::ntfy::ntfy_test(&settings)

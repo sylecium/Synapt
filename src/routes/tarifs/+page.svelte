@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { tarifsList, tarifsSetActif, tarifsUpsert } from '$lib/api';
+	import { userMessage } from '$lib/errors';
 	import type { Tarif } from '$lib/types';
 	import { centimesToEuros, eurosToCentimes, formatCentimes } from '$lib/format';
 	import EmptyState from '$lib/components/EmptyState.svelte';
@@ -62,7 +63,7 @@
 			await load();
 			toast.success(editing ? 'Tarif modifié' : 'Tarif créé');
 		} catch (e) {
-			toast.error(String(e));
+			toast.error(userMessage(e));
 		} finally {
 			saving = false;
 		}
@@ -74,7 +75,7 @@
 			await load();
 			toast.success(actif ? 'Tarif réactivé' : 'Tarif désactivé');
 		} catch (e) {
-			toast.error(String(e));
+			toast.error(userMessage(e));
 		}
 	}
 </script>

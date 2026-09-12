@@ -114,7 +114,7 @@
 						{#each rdvsForDay(day).filter(rdvInGrid) as rdv (rdv.id)}
 							<button
 								type="button"
-								class="bg-primary text-primary-foreground absolute inset-x-0.5 z-10 overflow-hidden rounded-[0.4rem] px-1 py-0.5 text-left text-xs hover:opacity-90"
+								class="bg-primary text-primary-foreground absolute inset-x-0.5 z-10 overflow-hidden rounded-md px-1 py-0.5 text-left text-xs hover:opacity-90"
 								style={rdvStyle(rdv)}
 								onclick={(e) => {
 									e.stopPropagation();
@@ -132,7 +132,7 @@
 							{#each rdvsOutsideForDay(day) as rdv (rdv.id)}
 								<button
 									type="button"
-									class="bg-warn-bg text-warn hover:opacity-90 rounded px-2 py-1 text-left text-xs"
+									class="bg-warn-bg text-warn hover:opacity-90 rounded-md px-2 py-1 text-left text-xs"
 									onclick={() => onRdv(rdv)}
 								>
 									<span class="font-medium">{rdv.client_nom}</span>

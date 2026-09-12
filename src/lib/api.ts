@@ -1,4 +1,5 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke as tauriInvoke } from '@tauri-apps/api/core';
+import { userMessage } from './errors';
 import type {
 	Client,
 	Dashboard,
@@ -10,6 +11,12 @@ import type {
 	SettingsSetInput,
 	Tarif
 } from './types';
+
+function invoke<T>(cmd: string, args?: object): Promise<T> {
+	return tauriInvoke<T>(cmd, args as Record<string, unknown>).catch((e) =>
+		Promise.reject(userMessage(e))
+	);
+}
 
 export const settingsGet = () => invoke<SettingsPublic>('settings_get');
 

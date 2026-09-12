@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { clientsList, clientsUpsert } from '$lib/api';
+	import { userMessage } from '$lib/errors';
 	import type { Client } from '$lib/types';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
@@ -58,7 +59,7 @@
 			await load();
 			toast.success('Client créé');
 		} catch (e) {
-			toast.error(String(e));
+			toast.error(userMessage(e));
 		} finally {
 			saving = false;
 		}

@@ -11,7 +11,7 @@
 	let { title, description, href, actionLabel, onclick }: Props = $props();
 </script>
 
-<div class="rounded-md border bg-card px-4 py-6">
+<div class="rounded-lg border bg-card px-4 py-6">
 	<p class="text-sm font-medium">{title}</p>
 	<p class="text-muted-foreground mt-1 text-sm">{description}</p>
 	{#if actionLabel && (href || onclick)}

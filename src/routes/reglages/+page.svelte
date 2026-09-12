@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { ntfyTest, settingsGet, settingsSet } from '$lib/api';
+	import { userMessage } from '$lib/errors';
 	import type { SettingsPublic } from '$lib/types';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -48,7 +49,7 @@
 			stripeSecretKey = '';
 			toast.success('Réglages enregistrés');
 		} catch (e) {
-			toast.error(String(e));
+			toast.error(userMessage(e));
 		} finally {
 			saving = false;
 		}
@@ -60,7 +61,7 @@
 			await ntfyTest();
 			toast.success('Notification de test envoyée');
 		} catch (e) {
-			toast.error(String(e));
+			toast.error(userMessage(e));
 		} finally {
 			testing = false;
 		}

@@ -2,9 +2,17 @@
 	import { onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { openUrl } from '@tauri-apps/plugin-opener';
-	import { clientsList, rdvDashboard, settingsGet, tarifsList } from '$lib/api';
+	import { clientsList, rdvDashboard, rdvList, settingsGet, tarifsList } from '$lib/api';
+	import { nextRdv, remainingRdvs } from '$lib/dashboardStats';
+	import { userMessage } from '$lib/errors';
 	import type { Dashboard, Rdv, RdvCreateResult, SettingsPublic } from '$lib/types';
-	import { formatDateTime, formatTime } from '$lib/format';
+	import {
+		formatDateTime,
+		formatTime,
+		sameLocalDay,
+		startOfWeekMonday,
+		weekBoundsUtc
+	} from '$lib/format';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import RdvDialog from '$lib/components/RdvDialog.svelte';
@@ -14,12 +22,14 @@
 
 	let dashboard = $state<Dashboard | null>(null);
 	let settings = $state<SettingsPublic | null>(null);
+	let weekCount = $state(0);
 	let rdvDialogOpen = $state(false);
 	let panelOpen = $state(false);
 	let panelRdvId = $state<string | null>(null);
 	let initial = $state(true);
 	let clientsCount = $state(0);
 	let tarifsCount = $state(0);
+	let now = $state(new Date());
 
 	const needsSetup = $derived(
 		dashboard !== null && (clientsCount === 0 || tarifsCount === 0)
@@ -29,24 +39,40 @@
 		settings !== null && (!settings.ntfy_topic || !settings.stripe_configured)
 	);
 
-	onMount(async () => {
-		await reload();
+	const restants = $derived(
+		dashboard ? remainingRdvs(dashboard.aujourdhui, now).length : 0
+	);
+
+	const prochain = $derived(
+		dashboard ? nextRdv(dashboard.aujourdhui, dashboard.a_venir, now) : null
+	);
+
+	onMount(() => {
+		reload();
+		const id = setInterval(() => {
+			now = new Date();
+		}, 60_000);
+		return () => clearInterval(id);
 	});
 
 	async function reload() {
 		try {
-			const [s, d, clients, tarifs] = await Promise.all([
+			const week = weekBoundsUtc(startOfWeekMonday(new Date()));
+			const [s, d, clients, tarifs, weekRdvs] = await Promise.all([
 				settingsGet(),
 				rdvDashboard(),
 				clientsList(),
-				tarifsList()
+				tarifsList(),
+				rdvList({ from: week.from, to: week.to })
 			]);
 			settings = s;
 			dashboard = d;
 			clientsCount = clients.length;
 			tarifsCount = tarifs.length;
+			weekCount = weekRdvs.length;
+			now = new Date();
 		} catch (e) {
-			toast.error(String(e));
+			toast.error(userMessage(e));
 		} finally {
 			initial = false;
 		}
@@ -61,13 +87,17 @@
 		try {
 			await openUrl(url);
 		} catch (e) {
-			toast.error(String(e));
+			toast.error(userMessage(e));
 		}
 	}
 
 	function onRdvSaved(_result: RdvCreateResult) {
 		rdvDialogOpen = false;
 		reload();
+	}
+
+	function prochainHoraire(rdv: Rdv): string {
+		return sameLocalDay(new Date(rdv.debut), now) ? formatTime(rdv.debut) : formatDateTime(rdv.debut);
 	}
 </script>
 
@@ -78,14 +108,15 @@
 	</PageHeader>
 
 	{#if initial}
-		<Skeleton class="h-12" />
+		<Skeleton class="h-20" />
+		<Skeleton class="h-24" />
 		<Skeleton class="h-12" />
 		<Skeleton class="h-12" />
 	{:else if dashboard === null}
 		<p class="text-muted-foreground text-sm">Impossible de charger le tableau de bord.</p>
 	{:else}
 		{#if needsSetup}
-			<div class="rounded-md border bg-card px-4 py-3">
+			<div class="rounded-lg border bg-card px-4 py-3">
 				<div class="flex flex-col divide-y">
 					<div class="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0">
 						<span class="text-sm">1. Créer un tarif</span>
@@ -118,18 +149,71 @@
 		{/if}
 
 		{#if showBanner}
-			<div class="bg-muted rounded-md border px-4 py-3 text-sm">
+			<div class="bg-muted rounded-lg border px-4 py-3 text-sm">
 				Configuration incomplète (ntfy ou Stripe).
 				<a href="/reglages" class="text-primary underline">Réglages</a>
 			</div>
+		{/if}
+
+		<div class="grid grid-cols-3 divide-x rounded-lg border">
+			<div class="px-4 py-3">
+				<p class="font-mono text-2xl tabular-nums tracking-tight">{dashboard.aujourdhui.length}</p>
+				<p class="text-muted-foreground mt-0.5 text-xs font-medium tracking-wide uppercase">
+					Aujourd'hui
+				</p>
+			</div>
+			<div class="px-4 py-3">
+				<p class="font-mono text-2xl tabular-nums tracking-tight">{restants}</p>
+				<p class="text-muted-foreground mt-0.5 text-xs font-medium tracking-wide uppercase">
+					Restants
+				</p>
+			</div>
+			<div class="px-4 py-3">
+				<p class="font-mono text-2xl tabular-nums tracking-tight">{weekCount}</p>
+				<p class="text-muted-foreground mt-0.5 text-xs font-medium tracking-wide uppercase">
+					Cette semaine
+				</p>
+			</div>
+		</div>
+
+		{#if prochain}
+			<section class="flex flex-col gap-2">
+				<h2 class="text-xs font-medium tracking-wide text-muted-foreground uppercase">Prochain</h2>
+				<div class="flex items-center gap-3 rounded-lg border px-4 py-3">
+					<button
+						type="button"
+						class="flex min-w-0 flex-1 items-center gap-4 text-left"
+						onclick={() => openPanel(prochain)}
+					>
+						<span class="font-mono text-xl tabular-nums tracking-tight">
+							{prochainHoraire(prochain)}
+						</span>
+						<span class="min-w-0">
+							<span class="block truncate font-medium">{prochain.client_nom}</span>
+							<span class="text-muted-foreground block truncate text-sm">
+								{prochain.tarif_nom || '—'} · {prochain.duree_minutes} min
+							</span>
+						</span>
+					</button>
+					<Button
+						size="sm"
+						onclick={(e) => {
+							e.stopPropagation();
+							openLink(prochain.jitsi_url);
+						}}
+					>
+						Jitsi
+					</Button>
+				</div>
+			</section>
 		{/if}
 
 		<section class="flex flex-col gap-3">
 			<h2 class="text-xs font-medium tracking-wide text-muted-foreground uppercase">
 				Aujourd'hui
 			</h2>
-			{#if dashboard?.aujourdhui.length}
-				<ul class="divide-y rounded-md border">
+			{#if dashboard.aujourdhui.length}
+				<ul class="divide-y rounded-lg border">
 					{#each dashboard.aujourdhui as rdv (rdv.id)}
 						<li class="flex items-center gap-x-4 px-4 py-3">
 							<button
@@ -167,8 +251,8 @@
 
 		<section class="flex flex-col gap-3">
 			<h2 class="text-xs font-medium tracking-wide text-muted-foreground uppercase">À venir</h2>
-			{#if dashboard?.a_venir.length}
-				<ul class="divide-y rounded-md border">
+			{#if dashboard.a_venir.length}
+				<ul class="divide-y rounded-lg border">
 					{#each dashboard.a_venir as rdv (rdv.id)}
 						<li>
 							<button
