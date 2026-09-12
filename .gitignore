@@ -10,3 +10,5 @@ AGENTS.md
 .omc/
 .superpowers/
 .cursor/hooks/state/
+.cursor/
+.worktrees/
