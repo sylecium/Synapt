@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { installUpdateMessage } from './updater-errors';
+import { installUpdateMessage } from '../src/lib/updater-errors';
 
 test('accès GitHub refusé', () => {
 	expect(installUpdateMessage('401 Unauthorized')).toBe('Accès aux mises à jour refusé.');

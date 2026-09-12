@@ -29,7 +29,7 @@
 					case 'Started':
 						contentLength = event.data.contentLength ?? 0;
 						downloaded = 0;
-						percent = 0;
+						percent = contentLength > 0 ? 0 : null;
 						break;
 					case 'Progress':
 						downloaded += event.data.chunkLength;
