@@ -43,7 +43,9 @@
 	let cancelling = $state(false);
 	let stripeBusy = $state(false);
 	let saveTimer: ReturnType<typeof setTimeout> | null = null;
+	let flushInFlight: Promise<void> | null = null;
 	let loadedRdvId = $state<string | null>(null);
+	let panelGen = 0;
 
 	const rdv = $derived(detail?.rdv ?? null);
 	const rappels = $derived(detail?.rappels ?? []);
@@ -57,20 +59,23 @@
 	);
 
 	$effect(() => {
+		const gen = ++panelGen;
 		if (open && rdvId) {
 			if (loadedRdvId && loadedRdvId !== rdvId) {
 				void (async () => {
 					await flushNote();
+					if (gen !== panelGen) return;
 					loadedRdvId = rdvId;
-					await loadDetail(rdvId);
+					await loadDetail(rdvId, gen);
 				})();
 			} else {
 				loadedRdvId = rdvId;
-				void loadDetail(rdvId);
+				void loadDetail(rdvId, gen);
 			}
 		} else if (!open) {
 			void (async () => {
 				await flushNote();
+				if (gen !== panelGen) return;
 				detail = null;
 				loadedRdvId = null;
 			})();
@@ -78,7 +83,7 @@
 	});
 
 	onDestroy(() => {
-		void flushNote();
+		if (saveTimer) void flushNote();
 	});
 
 	onMount(async () => {
@@ -99,15 +104,18 @@
 		return formatTime(d.toISOString());
 	}
 
-	async function loadDetail(id: string) {
+	async function loadDetail(id: string, gen: number) {
 		loading = true;
 		try {
-			detail = await rdvGet(id);
+			const next = await rdvGet(id);
+			if (gen !== panelGen) return;
+			detail = next;
 		} catch (e) {
+			if (gen !== panelGen) return;
 			toast.error(userMessage(e));
 			open = false;
 		} finally {
-			loading = false;
+			if (gen === panelGen) loading = false;
 		}
 	}
 
@@ -169,6 +177,16 @@
 	}
 
 	async function flushNote() {
+		if (flushInFlight) return flushInFlight;
+		flushInFlight = flushNoteNow();
+		try {
+			await flushInFlight;
+		} finally {
+			flushInFlight = null;
+		}
+	}
+
+	async function flushNoteNow() {
 		if (saveTimer) {
 			clearTimeout(saveTimer);
 			saveTimer = null;
@@ -195,7 +213,7 @@
 
 	function onEditSaved() {
 		editOpen = false;
-		if (rdvId) loadDetail(rdvId);
+		if (rdvId) void loadDetail(rdvId, panelGen);
 		onUpdated();
 	}
 </script>
@@ -221,7 +239,7 @@
 				onOpen={() => {}}
 				onEdit={openEdit}
 				onUpdated={() => {
-					if (rdvId) loadDetail(rdvId);
+					if (rdvId) void loadDetail(rdvId, panelGen);
 					onUpdated();
 				}}
 			>
