@@ -186,7 +186,7 @@
 								<span class="min-w-0">
 									<span class="block truncate font-medium">{prochain.client_nom}</span>
 									<span class="text-muted-foreground block truncate text-sm">
-										{prochain.tarif_nom || '—'} · {prochain.duree_minutes} min
+										{prochain.tarif_nom || '-'} · {prochain.duree_minutes} min
 									</span>
 								</span>
 							</button>
@@ -223,7 +223,7 @@
 										>
 											<span class="w-14 font-mono tabular-nums">{formatTime(rdv.debut)}</span>
 											<span>{rdv.client_nom}</span>
-											<span class="text-muted-foreground text-sm">{rdv.tarif_nom || '—'}</span>
+											<span class="text-muted-foreground text-sm">{rdv.tarif_nom || '-'}</span>
 										</button>
 										<Button
 											size="sm"
@@ -270,7 +270,7 @@
 											{formatDateTime(rdv.debut)}
 										</span>
 										<span>{rdv.client_nom}</span>
-										<span class="text-muted-foreground">{rdv.tarif_nom || '—'}</span>
+										<span class="text-muted-foreground">{rdv.tarif_nom || '-'}</span>
 									</button>
 								{/snippet}
 							</RdvContextMenu>

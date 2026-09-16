@@ -1,3 +1,5 @@
+import type { ClientFrequence, ClientOrientation, ClientStatut } from './types';
+
 export function formatTime(iso: string): string {
 	return new Intl.DateTimeFormat('fr-FR', { timeStyle: 'short' }).format(new Date(iso));
 }
@@ -62,6 +64,57 @@ export function formatCentimes(centimes: number): string {
 	return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(
 		centimes / 100
 	);
+}
+
+export const CLIENT_STATUT_LABELS: Record<ClientStatut, string> = {
+	en_cours: 'En cours',
+	pause: 'Pause',
+	termine: 'Terminé'
+};
+
+export const CLIENT_ORIENTATION_LABELS: Record<ClientOrientation, string> = {
+	medecin: 'Médecin',
+	reco: 'Recommandation',
+	lui_meme: 'De lui-même'
+};
+
+export const CLIENT_FREQUENCE_LABELS: Record<ClientFrequence, string> = {
+	hebdo: 'Hebdomadaire',
+	bimensuel: 'Bimensuel',
+	a_la_demande: 'À la demande'
+};
+
+export function statutLabel(v: string): string {
+	switch (v) {
+		case 'en_cours':
+		case 'pause':
+		case 'termine':
+			return CLIENT_STATUT_LABELS[v];
+		default:
+			return v;
+	}
+}
+
+export function orientationLabel(v: string): string {
+	switch (v) {
+		case 'medecin':
+		case 'reco':
+		case 'lui_meme':
+			return CLIENT_ORIENTATION_LABELS[v];
+		default:
+			return '-';
+	}
+}
+
+export function frequenceLabel(v: string): string {
+	switch (v) {
+		case 'hebdo':
+		case 'bimensuel':
+		case 'a_la_demande':
+			return CLIENT_FREQUENCE_LABELS[v];
+		default:
+			return '-';
+	}
 }
 
 export function formatDateTime(iso: string): string {

@@ -32,6 +32,14 @@ export const clientsUpsert = (p: {
 	nom: string;
 	email?: string | null;
 	telephone?: string | null;
+	statut?: string | null;
+	memo?: string | null;
+	tarif_id?: string | null;
+	date_naissance?: string | null;
+	urgence_nom?: string | null;
+	urgence_telephone?: string | null;
+	orientation?: string | null;
+	frequence?: string | null;
 }) => invoke<Client>('clients_upsert', p);
 
 export const tarifsList = () => invoke<Tarif[]>('tarifs_list');

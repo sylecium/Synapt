@@ -6,8 +6,32 @@ pub struct Client {
     pub nom: String,
     pub email: Option<String>,
     pub telephone: Option<String>,
+    pub statut: String,
+    pub memo: Option<String>,
+    pub tarif_id: Option<String>,
+    pub date_naissance: Option<String>,
+    pub urgence_nom: Option<String>,
+    pub urgence_telephone: Option<String>,
+    pub orientation: Option<String>,
+    pub frequence: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ClientWrite {
+    pub id: Option<String>,
+    pub nom: String,
+    pub email: Option<String>,
+    pub telephone: Option<String>,
+    pub statut: Option<String>,
+    pub memo: Option<String>,
+    pub tarif_id: Option<String>,
+    pub date_naissance: Option<String>,
+    pub urgence_nom: Option<String>,
+    pub urgence_telephone: Option<String>,
+    pub orientation: Option<String>,
+    pub frequence: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

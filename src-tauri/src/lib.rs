@@ -45,11 +45,9 @@ pub fn run() {
 
             commands::run_ntfy_sync();
 
-            std::thread::spawn(|| {
-                loop {
-                    std::thread::sleep(Duration::from_secs(3600));
-                    commands::run_ntfy_sync();
-                }
+            std::thread::spawn(|| loop {
+                std::thread::sleep(Duration::from_secs(3600));
+                commands::run_ntfy_sync();
             });
 
             Ok(())

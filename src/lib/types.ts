@@ -1,8 +1,20 @@
+export type ClientStatut = 'en_cours' | 'pause' | 'termine';
+export type ClientOrientation = 'medecin' | 'reco' | 'lui_meme';
+export type ClientFrequence = 'hebdo' | 'bimensuel' | 'a_la_demande';
+
 export type Client = {
 	id: string;
 	nom: string;
 	email: string | null;
 	telephone: string | null;
+	statut: ClientStatut;
+	memo: string | null;
+	tarif_id: string | null;
+	date_naissance: string | null;
+	urgence_nom: string | null;
+	urgence_telephone: string | null;
+	orientation: ClientOrientation | null;
+	frequence: ClientFrequence | null;
 	created_at: string;
 	updated_at: string;
 };

@@ -124,12 +124,19 @@
 		}
 
 		clientId = presetClientId ?? clients[0]?.id ?? '';
-		const actifs = tarifs.filter((t) => t.actif);
-		tarifId = actifs[0]?.id ?? '';
-		dureeMinutes = String(actifs[0]?.duree_minutes ?? 60);
+		tarifId = tarifForNewRdv(clientId);
+		const tarif = tarifs.find((t) => t.id === tarifId);
+		dureeMinutes = String(tarif?.duree_minutes ?? 60);
 		debutLocal = presetDebut ? utcIsoToLocalDatetime(presetDebut) : defaultDebutLocal();
 		note = '';
 		formReady = true;
+	}
+
+	function tarifForNewRdv(cid: string): string {
+		const client = clients.find((c) => c.id === cid);
+		const habitual = tarifs.find((t) => t.id === client?.tarif_id && t.actif);
+		if (habitual) return habitual.id;
+		return tarifs.filter((t) => t.actif)[0]?.id ?? '';
 	}
 
 	function defaultDebutLocal(): string {
@@ -208,7 +215,13 @@
 					{clients}
 					value={clientId}
 					loaded={listsLoaded}
-					onValueChange={(id) => (clientId = id)}
+					onValueChange={(id) => {
+						clientId = id;
+						if (!isEdit) {
+							tarifId = tarifForNewRdv(id);
+							onTarifChange();
+						}
+					}}
 				/>
 			</div>
 			<div class="flex flex-col gap-2">

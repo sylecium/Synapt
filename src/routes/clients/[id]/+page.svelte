@@ -8,12 +8,23 @@
 		notesDelete,
 		notesList,
 		notesUpsert,
-		rdvList
+		rdvList,
+		tarifsList
 	} from '$lib/api';
 	import { userMessage } from '$lib/errors';
-	import type { Client, Note, Rdv } from '$lib/types';
-	import { formatDateTime, formatNoteListDate } from '$lib/format';
+	import type { Client, ClientStatut, Note, Rdv, Tarif } from '$lib/types';
+	import {
+		CLIENT_FREQUENCE_LABELS,
+		CLIENT_ORIENTATION_LABELS,
+		CLIENT_STATUT_LABELS,
+		formatDateTime,
+		formatNoteListDate,
+		frequenceLabel,
+		orientationLabel
+	} from '$lib/format';
+	import { rdvBornes } from '$lib/rdvBornes';
 	import { noteTitle } from '$lib/notesHtml';
+	import DateNaissanceField from '$lib/components/DateNaissanceField.svelte';
 	import NoteEditor from '$lib/components/NoteEditor.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import RdvContextMenu from '$lib/components/RdvContextMenu.svelte';
@@ -24,6 +35,7 @@
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
 	import * as ContextMenu from '$lib/components/ui/context-menu/index.js';
+	import * as Select from '$lib/components/ui/select/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
 
 	const clientId = $derived(page.params.id!);
@@ -32,6 +44,15 @@
 	let nom = $state('');
 	let email = $state('');
 	let telephone = $state('');
+	let statut = $state<ClientStatut>('en_cours');
+	let memo = $state('');
+	let tarifId = $state('');
+	let dateNaissance = $state('');
+	let urgenceNom = $state('');
+	let urgenceTelephone = $state('');
+	let orientation = $state('');
+	let frequence = $state('');
+	let tarifs = $state<Tarif[]>([]);
 	let notes = $state<Note[]>([]);
 	let rdvs = $state<Rdv[]>([]);
 	let saving = $state(false);
@@ -42,6 +63,15 @@
 	let editingId = $state<string | null>(null);
 	let saveTimer: ReturnType<typeof setTimeout> | null = null;
 	let pendingId: string | null = null;
+
+	const NONE = 'none';
+	const bornes = $derived(rdvBornes(rdvs));
+	const tarifsActifs = $derived(tarifs.filter((t) => t.actif));
+	const tarifCourant = $derived(tarifs.find((t) => t.id === tarifId));
+	const tarifSelectValue = $derived(tarifId === '' ? NONE : tarifId);
+	const tarifLabel = $derived(
+		tarifId === '' ? 'Sans tarif' : (tarifCourant?.nom ?? 'Sans tarif')
+	);
 
 	$effect(() => {
 		const id = clientId;
@@ -64,13 +94,23 @@
 			nom = c.nom;
 			email = c.email ?? '';
 			telephone = c.telephone ?? '';
-			const [n, r] = await Promise.all([
+			statut = c.statut;
+			memo = c.memo ?? '';
+			tarifId = c.tarif_id ?? '';
+			dateNaissance = c.date_naissance ?? '';
+			urgenceNom = c.urgence_nom ?? '';
+			urgenceTelephone = c.urgence_telephone ?? '';
+			orientation = c.orientation ?? '';
+			frequence = c.frequence ?? '';
+			const [n, r, t] = await Promise.all([
 				notesList({ client_id: id }),
-				rdvList({ client_id: id })
+				rdvList({ client_id: id }),
+				tarifsList()
 			]);
 			if (isCancelled()) return;
 			notes = n;
 			rdvs = r;
+			tarifs = t;
 			if (editingId && !n.some((note) => note.id === editingId)) {
 				editingId = n[0]?.id ?? null;
 			}
@@ -89,7 +129,15 @@
 				id: client.id,
 				nom: nom.trim(),
 				email: email.trim() || null,
-				telephone: telephone.trim() || null
+				telephone: telephone.trim() || null,
+				statut,
+				memo: memo.trim() || null,
+				tarif_id: tarifId || null,
+				date_naissance: dateNaissance || null,
+				urgence_nom: urgenceNom.trim() || null,
+				urgence_telephone: urgenceTelephone.trim() || null,
+				orientation: orientation || null,
+				frequence: frequence || null
 			});
 			toast.success('Client enregistré');
 		} catch (e) {
@@ -184,31 +232,147 @@
 	<PageHeader title={client?.nom ?? 'Fiche client'}>
 		<Button onclick={() => (rdvDialogOpen = true)}>Nouveau RDV</Button>
 	</PageHeader>
+	{#if client && !initial}
+		<p class="text-muted-foreground font-mono text-xs tabular-nums">
+			Prochain : {bornes.prochain ? formatDateTime(bornes.prochain.debut) : '-'}
+			<span class="text-border mx-2">|</span>
+			Dernier : {bornes.dernier ? formatDateTime(bornes.dernier.debut) : '-'}
+		</p>
+	{/if}
 
 	{#if initial}
 		<Skeleton class="h-48 max-w-lg" />
 		<Skeleton class="h-32" />
 		<Skeleton class="h-32" />
 	{:else if client}
-		<section class="flex max-w-lg flex-col gap-4">
-			<div class="flex flex-col gap-2">
-				<Label for="nom">Nom</Label>
-				<Input id="nom" bind:value={nom} />
+		<section class="flex max-w-xl flex-col gap-6">
+			<div class="flex flex-col gap-3">
+				<h2 class="text-muted-foreground text-xs font-medium tracking-wide uppercase">Identité</h2>
+				<div class="flex flex-col gap-2">
+					<Label for="nom">Nom</Label>
+					<Input id="nom" bind:value={nom} />
+				</div>
+				<div class="grid gap-3 sm:grid-cols-2">
+					<div class="flex flex-col gap-2">
+						<Label for="email">Email</Label>
+						<Input id="email" type="email" bind:value={email} />
+					</div>
+					<div class="flex flex-col gap-2">
+						<Label for="telephone">Téléphone</Label>
+						<Input id="telephone" bind:value={telephone} />
+					</div>
+				</div>
+				<div class="flex flex-col gap-2">
+					<Label for="date-naissance">Date de naissance</Label>
+					<DateNaissanceField id="date-naissance" bind:value={dateNaissance} />
+				</div>
 			</div>
-			<div class="flex flex-col gap-2">
-				<Label for="email">Email</Label>
-				<Input id="email" type="email" bind:value={email} />
+
+			<div class="flex flex-col gap-3">
+				<h2 class="text-muted-foreground text-xs font-medium tracking-wide uppercase">Suivi</h2>
+				<div class="grid gap-3 sm:grid-cols-2">
+				<div class="flex flex-col gap-2">
+					<Label>Statut</Label>
+					<Select.Root
+						type="single"
+						value={statut}
+						onValueChange={(v) => {
+							if (v === 'en_cours' || v === 'pause' || v === 'termine') statut = v;
+						}}
+					>
+						<Select.Trigger class="w-full">{CLIENT_STATUT_LABELS[statut]}</Select.Trigger>
+						<Select.Content>
+							{#each Object.entries(CLIENT_STATUT_LABELS) as [value, label] (value)}
+								<Select.Item {value} {label}>{label}</Select.Item>
+							{/each}
+						</Select.Content>
+					</Select.Root>
+				</div>
+				<div class="flex flex-col gap-2">
+					<Label>Tarif habituel</Label>
+					<Select.Root
+						type="single"
+						value={tarifSelectValue}
+						onValueChange={(v) => (tarifId = !v || v === NONE ? '' : v)}
+					>
+						<Select.Trigger class="w-full">{tarifLabel}</Select.Trigger>
+						<Select.Content>
+							<Select.Item value={NONE} label="Sans tarif">Sans tarif</Select.Item>
+							{#if tarifCourant && !tarifCourant.actif}
+								<Select.Item value={tarifCourant.id} label={tarifCourant.nom}>
+									{tarifCourant.nom} (inactif)
+								</Select.Item>
+							{/if}
+							{#each tarifsActifs as tarif (tarif.id)}
+								<Select.Item value={tarif.id} label={tarif.nom}>{tarif.nom}</Select.Item>
+							{/each}
+						</Select.Content>
+					</Select.Root>
+				</div>
+				<div class="flex flex-col gap-2">
+					<Label>Fréquence</Label>
+					<Select.Root
+						type="single"
+						value={frequence === '' ? NONE : frequence}
+						onValueChange={(v) => (frequence = !v || v === NONE ? '' : v)}
+					>
+						<Select.Trigger class="w-full">
+							{frequenceLabel(frequence)}
+						</Select.Trigger>
+						<Select.Content>
+							<Select.Item value={NONE} label="Non renseignée">Non renseignée</Select.Item>
+							{#each Object.entries(CLIENT_FREQUENCE_LABELS) as [value, label] (value)}
+								<Select.Item {value} {label}>{label}</Select.Item>
+							{/each}
+						</Select.Content>
+					</Select.Root>
+				</div>
+				<div class="flex flex-col gap-2">
+					<Label>Orientation</Label>
+					<Select.Root
+						type="single"
+						value={orientation === '' ? NONE : orientation}
+						onValueChange={(v) => (orientation = !v || v === NONE ? '' : v)}
+					>
+						<Select.Trigger class="w-full">
+							{orientationLabel(orientation)}
+						</Select.Trigger>
+						<Select.Content>
+							<Select.Item value={NONE} label="Non renseignée">Non renseignée</Select.Item>
+							{#each Object.entries(CLIENT_ORIENTATION_LABELS) as [value, label] (value)}
+								<Select.Item {value} {label}>{label}</Select.Item>
+							{/each}
+						</Select.Content>
+					</Select.Root>
+				</div>
+				<div class="flex flex-col gap-2 sm:col-span-2">
+					<Label for="memo">Mémo</Label>
+					<Input id="memo" bind:value={memo} maxlength={120} />
+				</div>
+				</div>
 			</div>
-			<div class="flex flex-col gap-2">
-				<Label for="telephone">Téléphone</Label>
-				<Input id="telephone" bind:value={telephone} />
+
+			<div class="flex flex-col gap-3">
+				<h2 class="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+					Personne à prévenir
+				</h2>
+				<div class="grid gap-3 sm:grid-cols-2">
+				<div class="flex flex-col gap-2">
+					<Label for="urgence-nom">Nom</Label>
+					<Input id="urgence-nom" bind:value={urgenceNom} />
+				</div>
+				<div class="flex flex-col gap-2">
+					<Label for="urgence-tel">Téléphone</Label>
+					<Input id="urgence-tel" bind:value={urgenceTelephone} />
+				</div>
+				</div>
 			</div>
 			<Button onclick={saveClient} disabled={saving}>Enregistrer</Button>
 		</section>
 
 		<section class="flex max-w-2xl flex-col gap-3">
 			<div class="flex items-center justify-between gap-2">
-				<h2 class="text-sm font-medium">Notes</h2>
+				<h2 class="text-muted-foreground text-xs font-medium tracking-wide uppercase">Notes</h2>
 				<Button variant="outline" size="sm" onclick={createNote}>Nouvelle note</Button>
 			</div>
 			{#if notes.length === 0}
@@ -279,7 +443,9 @@
 		</section>
 
 		<section class="flex flex-col gap-4">
-			<h2 class="text-sm font-medium">Historique RDV</h2>
+			<h2 class="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+				Historique RDV
+			</h2>
 			<Table.Root>
 				<Table.Header>
 					<Table.Row>
@@ -294,7 +460,7 @@
 							{#snippet children(props)}
 								<Table.Row class="cursor-pointer" {...props} onclick={() => openPanel(rdv)}>
 									<Table.Cell>{formatDateTime(rdv.debut)}</Table.Cell>
-									<Table.Cell>{rdv.tarif_nom || '—'}</Table.Cell>
+									<Table.Cell>{rdv.tarif_nom || '-'}</Table.Cell>
 									<Table.Cell>{rdv.duree_minutes} min</Table.Cell>
 								</Table.Row>
 							{/snippet}

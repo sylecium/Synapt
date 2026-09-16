@@ -1,14 +1,12 @@
-use chrono::{DateTime, Duration, Local, TimeZone, Utc};
+use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone, Utc};
 use rusqlite::{params, Connection, Row};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::db::{db_path, migrate, open_file};
 use crate::error::AppError;
-use crate::models::{Client, Dashboard, Note, RappelNtfy, Rdv, RdvDetail, Tarif};
-use crate::ntfy::{
-    echeance, ntfy_delete, should_publish, NtfyClient, RappelKind, ReqwestNtfy,
-};
+use crate::models::{Client, ClientWrite, Dashboard, Note, RappelNtfy, Rdv, RdvDetail, Tarif};
+use crate::ntfy::{echeance, ntfy_delete, should_publish, NtfyClient, RappelKind, ReqwestNtfy};
 use crate::overlap::overlaps;
 use crate::settings::{load_settings, save_settings, Settings, SettingsPublic};
 use crate::stripe::stripe_create_payment_link;
@@ -60,12 +58,24 @@ fn ensure_migrated(conn: &Connection) -> Result<(), AppError> {
     migrate(conn)
 }
 
+const CLIENT_SELECT: &str = "SELECT id, nom, email, telephone, statut, memo, tarif_id,
+    date_naissance, urgence_nom, urgence_telephone, orientation, frequence,
+    created_at, updated_at FROM clients";
+
 fn row_to_client(row: &Row<'_>) -> Result<Client, rusqlite::Error> {
     Ok(Client {
         id: row.get("id")?,
         nom: row.get("nom")?,
         email: row.get("email")?,
         telephone: row.get("telephone")?,
+        statut: row.get("statut")?,
+        memo: row.get("memo")?,
+        tarif_id: row.get("tarif_id")?,
+        date_naissance: row.get("date_naissance")?,
+        urgence_nom: row.get("urgence_nom")?,
+        urgence_telephone: row.get("urgence_telephone")?,
+        orientation: row.get("orientation")?,
+        frequence: row.get("frequence")?,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
     })
@@ -136,7 +146,11 @@ fn fetch_tarif(conn: &Connection, tarif_id: &str) -> Result<Tarif, AppError> {
         .map_err(|_| AppError::new("tarif introuvable"))
 }
 
-fn rappel_deja_programme(conn: &Connection, rdv_id: &str, kind: RappelKind) -> Result<bool, AppError> {
+fn rappel_deja_programme(
+    conn: &Connection,
+    rdv_id: &str,
+    kind: RappelKind,
+) -> Result<bool, AppError> {
     let count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM rappels_ntfy WHERE rdv_id = ?1 AND type = ?2 AND etat = 'programme'",
         params![rdv_id, kind.as_str()],
@@ -293,8 +307,7 @@ async fn ntfy_schedule_rdv(settings: &Settings, rdv: &Rdv, now: DateTime<Utc>) -
             continue;
         }
 
-        let client_nom = with_db(|conn| fetch_client_nom(conn, &rdv.client_id))
-            .unwrap_or_default();
+        let client_nom = with_db(|conn| fetch_client_nom(conn, &rdv.client_id)).unwrap_or_default();
         let ntfy = ReqwestNtfy::for_rdv(&settings, &client_nom, debut, &rdv.jitsi_url, kind);
         match ntfy.publish_async(echeance_at).await {
             Ok(ntfy_id) => {
@@ -373,384 +386,482 @@ fn local_day_bounds(now: DateTime<Utc>) -> (DateTime<Utc>, DateTime<Utc>) {
 pub mod repo {
     use super::*;
 
-    pub fn clients_upsert(
-    conn: &Connection,
-    id: Option<&str>,
-    nom: &str,
-    email: Option<&str>,
-    telephone: Option<&str>,
-) -> Result<Client, AppError> {
-    ensure_migrated(conn)?;
-    let now = now_iso();
-    let id = match id {
-        Some(existing) => existing.to_string(),
-        None => Uuid::new_v4().to_string(),
-    };
-
-    let exists: bool = conn.query_row(
-        "SELECT COUNT(*) FROM clients WHERE id = ?1",
-        params![id],
-        |row| row.get(0),
-    )?;
-
-    if exists {
-        conn.execute(
-            "UPDATE clients SET nom = ?1, email = ?2, telephone = ?3, updated_at = ?4 WHERE id = ?5",
-            params![nom, email, telephone, now, id],
-        )?;
-    } else {
-        conn.execute(
-            "INSERT INTO clients (id, nom, email, telephone, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
-            params![id, nom, email, telephone, now],
-        )?;
+    fn trim_opt(s: Option<String>) -> Option<String> {
+        s.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
     }
 
-    clients_get(conn, &id)
-}
-
-pub fn clients_list(conn: &Connection) -> Result<Vec<Client>, AppError> {
-    ensure_migrated(conn)?;
-    let mut stmt = conn.prepare(
-        "SELECT id, nom, email, telephone, created_at, updated_at FROM clients ORDER BY nom",
-    )?;
-    let clients = stmt
-        .query_map([], row_to_client)?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(clients)
-}
-
-pub fn clients_get(conn: &Connection, id: &str) -> Result<Client, AppError> {
-    ensure_migrated(conn)?;
-    let mut stmt = conn.prepare(
-        "SELECT id, nom, email, telephone, created_at, updated_at FROM clients WHERE id = ?1",
-    )?;
-    let client = stmt.query_row(params![id], row_to_client)?;
-    Ok(client)
-}
-
-pub fn tarifs_upsert(
-    conn: &Connection,
-    id: Option<&str>,
-    nom: &str,
-    duree_minutes: i64,
-    prix_centimes: i64,
-) -> Result<Tarif, AppError> {
-    ensure_migrated(conn)?;
-    let now = now_iso();
-    let id = match id {
-        Some(existing) => existing.to_string(),
-        None => Uuid::new_v4().to_string(),
-    };
-
-    let exists: bool = conn.query_row(
-        "SELECT COUNT(*) FROM tarifs WHERE id = ?1",
-        params![id],
-        |row| row.get(0),
-    )?;
-
-    if exists {
-        conn.execute(
-            "UPDATE tarifs SET nom = ?1, duree_minutes = ?2, prix_centimes = ?3, updated_at = ?4 WHERE id = ?5",
-            params![nom, duree_minutes, prix_centimes, now, id],
-        )?;
-    } else {
-        conn.execute(
-            "INSERT INTO tarifs (id, nom, duree_minutes, prix_centimes, actif, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5)",
-            params![id, nom, duree_minutes, prix_centimes, now],
-        )?;
-    }
-
-    tarifs_get(conn, &id)
-}
-
-fn tarifs_get(conn: &Connection, id: &str) -> Result<Tarif, AppError> {
-    let mut stmt = conn.prepare(
-        "SELECT id, nom, duree_minutes, prix_centimes, actif, created_at, updated_at FROM tarifs WHERE id = ?1",
-    )?;
-    let tarif = stmt.query_row(params![id], row_to_tarif)?;
-    Ok(tarif)
-}
-
-pub fn tarifs_list(conn: &Connection) -> Result<Vec<Tarif>, AppError> {
-    ensure_migrated(conn)?;
-    let mut stmt = conn.prepare(
-        "SELECT id, nom, duree_minutes, prix_centimes, actif, created_at, updated_at FROM tarifs ORDER BY nom",
-    )?;
-    let tarifs = stmt
-        .query_map([], row_to_tarif)?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(tarifs)
-}
-
-pub fn tarifs_set_actif(conn: &Connection, id: &str, actif: bool) -> Result<Tarif, AppError> {
-    ensure_migrated(conn)?;
-    let now = now_iso();
-    let actif_int = i64::from(actif);
-    let updated = conn.execute(
-        "UPDATE tarifs SET actif = ?1, updated_at = ?2 WHERE id = ?3",
-        params![actif_int, now, id],
-    )?;
-    if updated == 0 {
-        return Err(AppError::new("tarif introuvable"));
-    }
-    tarifs_get(conn, id)
-}
-
-pub fn notes_upsert(
-    conn: &Connection,
-    id: Option<&str>,
-    client_id: Option<&str>,
-    corps: &str,
-) -> Result<Note, AppError> {
-    ensure_migrated(conn)?;
-    let now = now_iso();
-    let id = match id {
-        Some(existing) => existing.to_string(),
-        None => Uuid::new_v4().to_string(),
-    };
-
-    let exists: bool = conn.query_row(
-        "SELECT COUNT(*) FROM notes WHERE id = ?1",
-        params![id],
-        |row| row.get(0),
-    )?;
-
-    if exists {
-        conn.execute(
-            "UPDATE notes SET client_id = ?1, corps = ?2, updated_at = ?3 WHERE id = ?4",
-            params![client_id, corps, now, id],
-        )?;
-    } else {
-        conn.execute(
-            "INSERT INTO notes (id, client_id, corps, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
-            params![id, client_id, corps, now],
-        )?;
-    }
-
-    notes_get(conn, &id)
-}
-
-fn notes_get(conn: &Connection, id: &str) -> Result<Note, AppError> {
-    let mut stmt =
-        conn.prepare("SELECT id, client_id, corps, created_at, updated_at FROM notes WHERE id = ?1")?;
-    let note = stmt.query_row(params![id], row_to_note)?;
-    Ok(note)
-}
-
-pub fn notes_list(
-    conn: &Connection,
-    client_id: Option<String>,
-    perso: bool,
-) -> Result<Vec<Note>, AppError> {
-    ensure_migrated(conn)?;
-    if perso {
-        let mut stmt = conn.prepare(
-            "SELECT id, client_id, corps, created_at, updated_at FROM notes WHERE client_id IS NULL ORDER BY updated_at DESC",
-        )?;
-        return stmt
-            .query_map([], row_to_note)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(AppError::from);
-    }
-    if let Some(client_id) = client_id {
-        let mut stmt = conn.prepare(
-            "SELECT id, client_id, corps, created_at, updated_at FROM notes WHERE client_id = ?1 ORDER BY updated_at DESC",
-        )?;
-        return stmt
-            .query_map(params![client_id], row_to_note)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(AppError::from);
-    }
-    let mut stmt = conn.prepare(
-        "SELECT id, client_id, corps, created_at, updated_at FROM notes ORDER BY updated_at DESC",
-    )?;
-    let notes = stmt
-        .query_map([], row_to_note)?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(notes)
-}
-
-pub fn notes_delete(conn: &Connection, id: &str) -> Result<(), AppError> {
-    ensure_migrated(conn)?;
-    let deleted = conn.execute("DELETE FROM notes WHERE id = ?1", params![id])?;
-    if deleted == 0 {
-        return Err(AppError::new("note introuvable"));
-    }
-    Ok(())
-}
-
-pub fn rdv_create(
-    conn: &Connection,
-    client_id: &str,
-    tarif_id: Option<String>,
-    debut: &str,
-    duree_minutes: i64,
-    note: Option<String>,
-) -> Result<Rdv, AppError> {
-    ensure_migrated(conn)?;
-    if duree_minutes <= 0 {
-        return Err(AppError::new("duree_minutes doit etre positif"));
-    }
-
-    let mut stmt = conn.prepare(
-        "SELECT debut, duree_minutes FROM rdv WHERE statut = 'planifie'",
-    )?;
-    let existing = stmt
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-
-    for (existing_debut, existing_duree) in existing {
-        if overlaps(debut, duree_minutes, &existing_debut, existing_duree)? {
-            return Err(AppError::new("chevauchement horaire"));
+    fn parse_statut(s: Option<String>) -> Result<String, AppError> {
+        let v = trim_opt(s).unwrap_or_else(|| "en_cours".to_string());
+        match v.as_str() {
+            "en_cours" | "pause" | "termine" => Ok(v),
+            _ => Err(AppError::new("Statut de suivi inconnu.")),
         }
     }
 
-    let id = Uuid::new_v4().to_string();
-    let url = jitsi_url(&id);
-    let now = now_iso();
-    conn.execute(
+    fn parse_choice(
+        value: Option<String>,
+        allowed: &[&str],
+        err: &str,
+    ) -> Result<Option<String>, AppError> {
+        let Some(v) = trim_opt(value) else {
+            return Ok(None);
+        };
+        if allowed.contains(&v.as_str()) {
+            Ok(Some(v))
+        } else {
+            Err(AppError::new(err))
+        }
+    }
+
+    fn parse_date_naissance(value: Option<String>) -> Result<Option<String>, AppError> {
+        let Some(v) = trim_opt(value) else {
+            return Ok(None);
+        };
+        NaiveDate::parse_from_str(&v, "%Y-%m-%d")
+            .map_err(|_| AppError::new("La date de naissance n'est pas valide."))?;
+        Ok(Some(v))
+    }
+
+    pub fn clients_upsert(conn: &Connection, write: ClientWrite) -> Result<Client, AppError> {
+        ensure_migrated(conn)?;
+        let nom = write.nom.trim();
+        if nom.is_empty() {
+            return Err(AppError::new("Le nom est requis."));
+        }
+        let email = trim_opt(write.email);
+        let telephone = trim_opt(write.telephone);
+        let statut = parse_statut(write.statut)?;
+        let memo = trim_opt(write.memo);
+        if memo.as_ref().is_some_and(|m| m.chars().count() > 120) {
+            return Err(AppError::new("Le mémo est trop long (120 caractères max)."));
+        }
+        let tarif_id = trim_opt(write.tarif_id);
+        if let Some(tid) = tarif_id.as_deref() {
+            let n: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM tarifs WHERE id = ?1",
+                params![tid],
+                |row| row.get(0),
+            )?;
+            if n == 0 {
+                return Err(AppError::new("tarif introuvable"));
+            }
+        }
+        let date_naissance = parse_date_naissance(write.date_naissance)?;
+        let urgence_nom = trim_opt(write.urgence_nom);
+        let urgence_telephone = trim_opt(write.urgence_telephone);
+        let orientation = parse_choice(
+            write.orientation,
+            &["medecin", "reco", "lui_meme"],
+            "Orientation inconnue.",
+        )?;
+        let frequence = parse_choice(
+            write.frequence,
+            &["hebdo", "bimensuel", "a_la_demande"],
+            "Fréquence inconnue.",
+        )?;
+
+        let now = now_iso();
+        let id = match write.id {
+            Some(existing) => existing,
+            None => Uuid::new_v4().to_string(),
+        };
+
+        let exists: bool = conn.query_row(
+            "SELECT COUNT(*) FROM clients WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?;
+
+        if exists {
+            conn.execute(
+                "UPDATE clients SET nom = ?1, email = ?2, telephone = ?3, statut = ?4, memo = ?5,
+                 tarif_id = ?6, date_naissance = ?7, urgence_nom = ?8, urgence_telephone = ?9,
+                 orientation = ?10, frequence = ?11, updated_at = ?12 WHERE id = ?13",
+                params![
+                    nom,
+                    email,
+                    telephone,
+                    statut,
+                    memo,
+                    tarif_id,
+                    date_naissance,
+                    urgence_nom,
+                    urgence_telephone,
+                    orientation,
+                    frequence,
+                    now,
+                    id
+                ],
+            )?;
+        } else {
+            conn.execute(
+                "INSERT INTO clients (
+                   id, nom, email, telephone, statut, memo, tarif_id, date_naissance,
+                   urgence_nom, urgence_telephone, orientation, frequence, created_at, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)",
+                params![
+                    id,
+                    nom,
+                    email,
+                    telephone,
+                    statut,
+                    memo,
+                    tarif_id,
+                    date_naissance,
+                    urgence_nom,
+                    urgence_telephone,
+                    orientation,
+                    frequence,
+                    now
+                ],
+            )?;
+        }
+
+        clients_get(conn, &id)
+    }
+
+    pub fn clients_list(conn: &Connection) -> Result<Vec<Client>, AppError> {
+        ensure_migrated(conn)?;
+        let mut stmt = conn.prepare(&format!("{CLIENT_SELECT} ORDER BY nom"))?;
+        let clients = stmt
+            .query_map([], row_to_client)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(clients)
+    }
+
+    pub fn clients_get(conn: &Connection, id: &str) -> Result<Client, AppError> {
+        ensure_migrated(conn)?;
+        let mut stmt = conn.prepare(&format!("{CLIENT_SELECT} WHERE id = ?1"))?;
+        let client = stmt.query_row(params![id], row_to_client)?;
+        Ok(client)
+    }
+
+    pub fn tarifs_upsert(
+        conn: &Connection,
+        id: Option<&str>,
+        nom: &str,
+        duree_minutes: i64,
+        prix_centimes: i64,
+    ) -> Result<Tarif, AppError> {
+        ensure_migrated(conn)?;
+        let now = now_iso();
+        let id = match id {
+            Some(existing) => existing.to_string(),
+            None => Uuid::new_v4().to_string(),
+        };
+
+        let exists: bool = conn.query_row(
+            "SELECT COUNT(*) FROM tarifs WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?;
+
+        if exists {
+            conn.execute(
+            "UPDATE tarifs SET nom = ?1, duree_minutes = ?2, prix_centimes = ?3, updated_at = ?4 WHERE id = ?5",
+            params![nom, duree_minutes, prix_centimes, now, id],
+        )?;
+        } else {
+            conn.execute(
+            "INSERT INTO tarifs (id, nom, duree_minutes, prix_centimes, actif, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5)",
+            params![id, nom, duree_minutes, prix_centimes, now],
+        )?;
+        }
+
+        tarifs_get(conn, &id)
+    }
+
+    fn tarifs_get(conn: &Connection, id: &str) -> Result<Tarif, AppError> {
+        let mut stmt = conn.prepare(
+        "SELECT id, nom, duree_minutes, prix_centimes, actif, created_at, updated_at FROM tarifs WHERE id = ?1",
+    )?;
+        let tarif = stmt.query_row(params![id], row_to_tarif)?;
+        Ok(tarif)
+    }
+
+    pub fn tarifs_list(conn: &Connection) -> Result<Vec<Tarif>, AppError> {
+        ensure_migrated(conn)?;
+        let mut stmt = conn.prepare(
+        "SELECT id, nom, duree_minutes, prix_centimes, actif, created_at, updated_at FROM tarifs ORDER BY nom",
+    )?;
+        let tarifs = stmt
+            .query_map([], row_to_tarif)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(tarifs)
+    }
+
+    pub fn tarifs_set_actif(conn: &Connection, id: &str, actif: bool) -> Result<Tarif, AppError> {
+        ensure_migrated(conn)?;
+        let now = now_iso();
+        let actif_int = i64::from(actif);
+        let updated = conn.execute(
+            "UPDATE tarifs SET actif = ?1, updated_at = ?2 WHERE id = ?3",
+            params![actif_int, now, id],
+        )?;
+        if updated == 0 {
+            return Err(AppError::new("tarif introuvable"));
+        }
+        tarifs_get(conn, id)
+    }
+
+    pub fn notes_upsert(
+        conn: &Connection,
+        id: Option<&str>,
+        client_id: Option<&str>,
+        corps: &str,
+    ) -> Result<Note, AppError> {
+        ensure_migrated(conn)?;
+        let now = now_iso();
+        let id = match id {
+            Some(existing) => existing.to_string(),
+            None => Uuid::new_v4().to_string(),
+        };
+
+        let exists: bool = conn.query_row(
+            "SELECT COUNT(*) FROM notes WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?;
+
+        if exists {
+            conn.execute(
+                "UPDATE notes SET client_id = ?1, corps = ?2, updated_at = ?3 WHERE id = ?4",
+                params![client_id, corps, now, id],
+            )?;
+        } else {
+            conn.execute(
+            "INSERT INTO notes (id, client_id, corps, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
+            params![id, client_id, corps, now],
+        )?;
+        }
+
+        notes_get(conn, &id)
+    }
+
+    fn notes_get(conn: &Connection, id: &str) -> Result<Note, AppError> {
+        let mut stmt = conn.prepare(
+            "SELECT id, client_id, corps, created_at, updated_at FROM notes WHERE id = ?1",
+        )?;
+        let note = stmt.query_row(params![id], row_to_note)?;
+        Ok(note)
+    }
+
+    pub fn notes_list(
+        conn: &Connection,
+        client_id: Option<String>,
+        perso: bool,
+    ) -> Result<Vec<Note>, AppError> {
+        ensure_migrated(conn)?;
+        if perso {
+            let mut stmt = conn.prepare(
+            "SELECT id, client_id, corps, created_at, updated_at FROM notes WHERE client_id IS NULL ORDER BY updated_at DESC",
+        )?;
+            return stmt
+                .query_map([], row_to_note)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(AppError::from);
+        }
+        if let Some(client_id) = client_id {
+            let mut stmt = conn.prepare(
+            "SELECT id, client_id, corps, created_at, updated_at FROM notes WHERE client_id = ?1 ORDER BY updated_at DESC",
+        )?;
+            return stmt
+                .query_map(params![client_id], row_to_note)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(AppError::from);
+        }
+        let mut stmt = conn.prepare(
+        "SELECT id, client_id, corps, created_at, updated_at FROM notes ORDER BY updated_at DESC",
+    )?;
+        let notes = stmt
+            .query_map([], row_to_note)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(notes)
+    }
+
+    pub fn notes_delete(conn: &Connection, id: &str) -> Result<(), AppError> {
+        ensure_migrated(conn)?;
+        let deleted = conn.execute("DELETE FROM notes WHERE id = ?1", params![id])?;
+        if deleted == 0 {
+            return Err(AppError::new("note introuvable"));
+        }
+        Ok(())
+    }
+
+    pub fn rdv_create(
+        conn: &Connection,
+        client_id: &str,
+        tarif_id: Option<String>,
+        debut: &str,
+        duree_minutes: i64,
+        note: Option<String>,
+    ) -> Result<Rdv, AppError> {
+        ensure_migrated(conn)?;
+        if duree_minutes <= 0 {
+            return Err(AppError::new("duree_minutes doit etre positif"));
+        }
+
+        let mut stmt =
+            conn.prepare("SELECT debut, duree_minutes FROM rdv WHERE statut = 'planifie'")?;
+        let existing = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        for (existing_debut, existing_duree) in existing {
+            if overlaps(debut, duree_minutes, &existing_debut, existing_duree)? {
+                return Err(AppError::new("chevauchement horaire"));
+            }
+        }
+
+        let id = Uuid::new_v4().to_string();
+        let url = jitsi_url(&id);
+        let now = now_iso();
+        conn.execute(
         "INSERT INTO rdv (id, client_id, tarif_id, debut, duree_minutes, jitsi_url, stripe_url, stripe_id, note, statut, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL, ?7, 'planifie', ?8, ?8)",
         params![id, client_id, tarif_id, debut, duree_minutes, url, note, now],
     )?;
 
-    fetch_rdv(conn, &id)
-}
-
-pub fn rdv_update(
-    conn: &Connection,
-    id: &str,
-    client_id: &str,
-    tarif_id: Option<String>,
-    debut: &str,
-    duree_minutes: i64,
-    note: Option<String>,
-) -> Result<Rdv, AppError> {
-    ensure_migrated(conn)?;
-    if duree_minutes <= 0 {
-        return Err(AppError::new("duree_minutes doit etre positif"));
+        fetch_rdv(conn, &id)
     }
 
-    let existing = fetch_rdv(conn, id)?;
-    if existing.statut != "planifie" {
-        return Err(AppError::new("rdv non modifiable"));
-    }
-
-    let mut stmt = conn.prepare(
-        "SELECT id, debut, duree_minutes FROM rdv WHERE statut = 'planifie' AND id != ?1",
-    )?;
-    let others = stmt
-        .query_map(params![id], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, i64>(2)?,
-            ))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-
-    for (_, other_debut, other_duree) in others {
-        if overlaps(debut, duree_minutes, &other_debut, other_duree)? {
-            return Err(AppError::new("chevauchement horaire"));
+    pub fn rdv_update(
+        conn: &Connection,
+        id: &str,
+        client_id: &str,
+        tarif_id: Option<String>,
+        debut: &str,
+        duree_minutes: i64,
+        note: Option<String>,
+    ) -> Result<Rdv, AppError> {
+        ensure_migrated(conn)?;
+        if duree_minutes <= 0 {
+            return Err(AppError::new("duree_minutes doit etre positif"));
         }
-    }
 
-    let now = now_iso();
-    conn.execute(
+        let existing = fetch_rdv(conn, id)?;
+        if existing.statut != "planifie" {
+            return Err(AppError::new("rdv non modifiable"));
+        }
+
+        let mut stmt = conn.prepare(
+            "SELECT id, debut, duree_minutes FROM rdv WHERE statut = 'planifie' AND id != ?1",
+        )?;
+        let others = stmt
+            .query_map(params![id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        for (_, other_debut, other_duree) in others {
+            if overlaps(debut, duree_minutes, &other_debut, other_duree)? {
+                return Err(AppError::new("chevauchement horaire"));
+            }
+        }
+
+        let now = now_iso();
+        conn.execute(
         "UPDATE rdv SET client_id = ?1, tarif_id = ?2, debut = ?3, duree_minutes = ?4, note = ?5, updated_at = ?6 WHERE id = ?7",
         params![client_id, tarif_id, debut, duree_minutes, note, now, id],
     )?;
 
-    fetch_rdv(conn, id)
-}
+        fetch_rdv(conn, id)
+    }
 
-fn fetch_rappels(conn: &Connection, rdv_id: &str) -> Result<Vec<RappelNtfy>, AppError> {
-    let mut stmt = conn.prepare(
+    fn fetch_rappels(conn: &Connection, rdv_id: &str) -> Result<Vec<RappelNtfy>, AppError> {
+        let mut stmt = conn.prepare(
         "SELECT id, rdv_id, type, ntfy_id, echeance, etat FROM rappels_ntfy WHERE rdv_id = ?1 ORDER BY echeance",
     )?;
-    let rappels = stmt
-        .query_map(params![rdv_id], |row| {
-            Ok(RappelNtfy {
-                id: row.get(0)?,
-                rdv_id: row.get(1)?,
-                r#type: row.get(2)?,
-                ntfy_id: row.get(3)?,
-                echeance: row.get(4)?,
-                etat: row.get(5)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rappels)
-}
-
-pub fn rdv_get(conn: &Connection, id: &str) -> Result<RdvDetail, AppError> {
-    ensure_migrated(conn)?;
-    let rdv = fetch_rdv(conn, id)?;
-    let rappels = fetch_rappels(conn, id)?;
-    Ok(RdvDetail { rdv, rappels })
-}
-
-pub fn rdv_annuler(conn: &Connection, id: &str) -> Result<Rdv, AppError> {
-    ensure_migrated(conn)?;
-    let now = now_iso();
-    let updated = conn.execute(
-        "UPDATE rdv SET statut = 'annule', updated_at = ?1 WHERE id = ?2",
-        params![now, id],
-    )?;
-    if updated == 0 {
-        return Err(AppError::new("rdv introuvable"));
-    }
-    fetch_rdv(conn, id)
-}
-
-pub fn rdv_list(
-    conn: &Connection,
-    from: Option<&str>,
-    to: Option<&str>,
-    client_id: Option<&str>,
-) -> Result<Vec<Rdv>, AppError> {
-    ensure_migrated(conn)?;
-    if let Some(cid) = client_id {
-        let sql = format!("{RDV_SELECT} WHERE rdv.client_id = ?1 ORDER BY rdv.debut");
-        let mut stmt = conn.prepare(&sql)?;
-        let rdvs = stmt
-            .query_map(params![cid], row_to_rdv)?
+        let rappels = stmt
+            .query_map(params![rdv_id], |row| {
+                Ok(RappelNtfy {
+                    id: row.get(0)?,
+                    rdv_id: row.get(1)?,
+                    r#type: row.get(2)?,
+                    ntfy_id: row.get(3)?,
+                    echeance: row.get(4)?,
+                    etat: row.get(5)?,
+                })
+            })?
             .collect::<Result<Vec<_>, _>>()?;
-        return Ok(rdvs);
+        Ok(rappels)
     }
 
-    let from = from.ok_or_else(|| AppError::new("from requis"))?;
-    let to = to.ok_or_else(|| AppError::new("to requis"))?;
-    let sql = format!(
+    pub fn rdv_get(conn: &Connection, id: &str) -> Result<RdvDetail, AppError> {
+        ensure_migrated(conn)?;
+        let rdv = fetch_rdv(conn, id)?;
+        let rappels = fetch_rappels(conn, id)?;
+        Ok(RdvDetail { rdv, rappels })
+    }
+
+    pub fn rdv_annuler(conn: &Connection, id: &str) -> Result<Rdv, AppError> {
+        ensure_migrated(conn)?;
+        let now = now_iso();
+        let updated = conn.execute(
+            "UPDATE rdv SET statut = 'annule', updated_at = ?1 WHERE id = ?2",
+            params![now, id],
+        )?;
+        if updated == 0 {
+            return Err(AppError::new("rdv introuvable"));
+        }
+        fetch_rdv(conn, id)
+    }
+
+    pub fn rdv_list(
+        conn: &Connection,
+        from: Option<&str>,
+        to: Option<&str>,
+        client_id: Option<&str>,
+    ) -> Result<Vec<Rdv>, AppError> {
+        ensure_migrated(conn)?;
+        if let Some(cid) = client_id {
+            let sql = format!("{RDV_SELECT} WHERE rdv.client_id = ?1 ORDER BY rdv.debut");
+            let mut stmt = conn.prepare(&sql)?;
+            let rdvs = stmt
+                .query_map(params![cid], row_to_rdv)?
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(rdvs);
+        }
+
+        let from = from.ok_or_else(|| AppError::new("from requis"))?;
+        let to = to.ok_or_else(|| AppError::new("to requis"))?;
+        let sql = format!(
         "{RDV_SELECT} WHERE rdv.debut >= ?1 AND rdv.debut < ?2 AND rdv.statut = 'planifie' ORDER BY rdv.debut"
     );
-    let mut stmt = conn.prepare(&sql)?;
-    let rdvs = stmt
-        .query_map(params![from, to], row_to_rdv)?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rdvs)
-}
+        let mut stmt = conn.prepare(&sql)?;
+        let rdvs = stmt
+            .query_map(params![from, to], row_to_rdv)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rdvs)
+    }
 
-pub fn rdv_dashboard(conn: &Connection, now: DateTime<Utc>) -> Result<Dashboard, AppError> {
-    ensure_migrated(conn)?;
-    let (day_start, day_end) = local_day_bounds(now);
-    let aujourdhui = rdv_list(
-        conn,
-        Some(&day_start.to_rfc3339()),
-        Some(&day_end.to_rfc3339()),
-        None,
-    )?;
+    pub fn rdv_dashboard(conn: &Connection, now: DateTime<Utc>) -> Result<Dashboard, AppError> {
+        ensure_migrated(conn)?;
+        let (day_start, day_end) = local_day_bounds(now);
+        let aujourdhui = rdv_list(
+            conn,
+            Some(&day_start.to_rfc3339()),
+            Some(&day_end.to_rfc3339()),
+            None,
+        )?;
 
-    let sql = format!(
+        let sql = format!(
         "{RDV_SELECT} WHERE rdv.debut >= ?1 AND rdv.statut = 'planifie' ORDER BY rdv.debut LIMIT 5"
     );
-    let mut stmt = conn.prepare(&sql)?;
-    let a_venir = stmt
-        .query_map(params![day_end.to_rfc3339()], row_to_rdv)?
-        .collect::<Result<Vec<_>, _>>()?;
+        let mut stmt = conn.prepare(&sql)?;
+        let a_venir = stmt
+            .query_map(params![day_end.to_rfc3339()], row_to_rdv)?
+            .collect::<Result<Vec<_>, _>>()?;
 
-    Ok(Dashboard { aujourdhui, a_venir })
+        Ok(Dashboard {
+            aujourdhui,
+            a_venir,
+        })
     }
 }
 
@@ -807,14 +918,32 @@ pub fn clients_upsert(
     nom: String,
     email: Option<String>,
     telephone: Option<String>,
+    statut: Option<String>,
+    memo: Option<String>,
+    tarif_id: Option<String>,
+    date_naissance: Option<String>,
+    urgence_nom: Option<String>,
+    urgence_telephone: Option<String>,
+    orientation: Option<String>,
+    frequence: Option<String>,
 ) -> Result<Client, String> {
     with_db(|conn| {
         repo::clients_upsert(
             conn,
-            id.as_deref(),
-            &nom,
-            email.as_deref(),
-            telephone.as_deref(),
+            ClientWrite {
+                id,
+                nom,
+                email,
+                telephone,
+                statut,
+                memo,
+                tarif_id,
+                date_naissance,
+                urgence_nom,
+                urgence_telephone,
+                orientation,
+                frequence,
+            },
         )
     })
     .map_err(|e| e.message)
@@ -852,10 +981,8 @@ pub fn notes_upsert(
     client_id: Option<String>,
     corps: String,
 ) -> Result<Note, String> {
-    with_db(|conn| {
-        repo::notes_upsert(conn, id.as_deref(), client_id.as_deref(), &corps)
-    })
-    .map_err(|e| e.message)
+    with_db(|conn| repo::notes_upsert(conn, id.as_deref(), client_id.as_deref(), &corps))
+        .map_err(|e| e.message)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -869,15 +996,8 @@ pub fn rdv_list(
     to: Option<String>,
     client_id: Option<String>,
 ) -> Result<Vec<Rdv>, String> {
-    with_db(|conn| {
-        repo::rdv_list(
-            conn,
-            from.as_deref(),
-            to.as_deref(),
-            client_id.as_deref(),
-        )
-    })
-    .map_err(|e| e.message)
+    with_db(|conn| repo::rdv_list(conn, from.as_deref(), to.as_deref(), client_id.as_deref()))
+        .map_err(|e| e.message)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -913,15 +1033,13 @@ pub async fn rdv_create(
 
     let mut warnings = Vec::new();
     let rdv = if let Some(data) = tarif_data {
-        match stripe_create_payment_link(
-            &settings.stripe.secret_key,
-            &data.nom,
-            data.prix_centimes,
-        )
-        .await
+        match stripe_create_payment_link(&settings.stripe.secret_key, &data.nom, data.prix_centimes)
+            .await
         {
-            Ok((stripe_id, stripe_url)) => with_db(|conn| save_stripe_link(conn, &rdv.id, &stripe_id, &stripe_url))
-                .map_err(|e| e.message)?,
+            Ok((stripe_id, stripe_url)) => {
+                with_db(|conn| save_stripe_link(conn, &rdv.id, &stripe_id, &stripe_url))
+                    .map_err(|e| e.message)?
+            }
             Err(e) => {
                 eprintln!("stripe: {}", e.message);
                 warnings.push(e.message);
@@ -997,12 +1115,8 @@ pub async fn stripe_ensure_link(rdv_id: String) -> Result<Rdv, String> {
     let tarif_data =
         with_db(|conn| stripe_tarif_data(conn, &rdv, &settings)).map_err(|e| e.message)?;
     if let Some(data) = tarif_data {
-        match stripe_create_payment_link(
-            &settings.stripe.secret_key,
-            &data.nom,
-            data.prix_centimes,
-        )
-        .await
+        match stripe_create_payment_link(&settings.stripe.secret_key, &data.nom, data.prix_centimes)
+            .await
         {
             Ok((stripe_id, stripe_url)) => {
                 return with_db(|conn| save_stripe_link(conn, &rdv.id, &stripe_id, &stripe_url))
@@ -1056,7 +1170,7 @@ mod tests {
     use super::{ntfy_sync, settings_apply, SettingsSetInput};
     use crate::db::migrate;
     use crate::error::AppError;
-    use crate::models::{Client, Tarif};
+    use crate::models::{Client, ClientWrite, Tarif};
     use crate::ntfy::{NtfyClient, RappelKind};
     use crate::settings::Settings;
     use chrono::{DateTime, Duration, TimeZone, Utc};
@@ -1085,7 +1199,14 @@ mod tests {
 
     fn seed_client(conn: &Connection) -> Client {
         migrate(conn).unwrap();
-        clients_upsert(conn, None, "Alice", None, None).unwrap()
+        clients_upsert(
+            conn,
+            ClientWrite {
+                nom: "Alice".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap()
     }
 
     fn seed_tarif(conn: &Connection) -> Tarif {
@@ -1163,7 +1284,14 @@ mod tests {
     fn rdv_list_filtre_par_client_id() {
         let conn = crate::db::open_memory().unwrap();
         let alice = seed_client(&conn);
-        let bob = clients_upsert(&conn, None, "Bob", None, None).unwrap();
+        let bob = clients_upsert(
+            &conn,
+            ClientWrite {
+                nom: "Bob".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         let tarif = seed_tarif(&conn);
         rdv_create(
             &conn,
@@ -1225,15 +1353,7 @@ mod tests {
     fn rappel_reprogram_apres_annule() {
         let conn = crate::db::open_memory().unwrap();
         let client = seed_client(&conn);
-        let rdv = rdv_create(
-            &conn,
-            &client.id,
-            None,
-            "2026-09-12T10:00:00Z",
-            60,
-            None,
-        )
-        .unwrap();
+        let rdv = rdv_create(&conn, &client.id, None, "2026-09-12T10:00:00Z", 60, None).unwrap();
         let echeance1 = Utc.with_ymd_and_hms(2026, 9, 12, 9, 0, 0).unwrap();
         super::insert_rappel(&conn, &rdv.id, RappelKind::H1, "ntfy-1", echeance1).unwrap();
         super::mark_rappels_annule(&conn, &rdv.id).unwrap();
@@ -1294,15 +1414,7 @@ mod tests {
     fn rdv_sans_tarif_a_tarif_nom_vide() {
         let conn = crate::db::open_memory().unwrap();
         let client = seed_client(&conn);
-        let rdv = rdv_create(
-            &conn,
-            &client.id,
-            None,
-            "2026-09-11T10:00:00Z",
-            60,
-            None,
-        )
-        .unwrap();
+        let rdv = rdv_create(&conn, &client.id, None, "2026-09-11T10:00:00Z", 60, None).unwrap();
         assert_eq!(rdv.client_nom, "Alice");
         assert_eq!(rdv.tarif_nom, "");
     }
@@ -1321,15 +1433,8 @@ mod tests {
             None,
         )
         .unwrap();
-        let err = rdv_create(
-            &conn,
-            &c.id,
-            Some(t.id),
-            "2026-09-11T10:30:00Z",
-            30,
-            None,
-        )
-        .unwrap_err();
+        let err =
+            rdv_create(&conn, &c.id, Some(t.id), "2026-09-11T10:30:00Z", 30, None).unwrap_err();
         assert!(
             err.message.contains("chevauche") || err.message.contains("horaire"),
             "message: {}",
@@ -1352,15 +1457,7 @@ mod tests {
         )
         .unwrap();
         rdv_annuler(&conn, &a.id).unwrap();
-        let b = rdv_create(
-            &conn,
-            &c.id,
-            Some(t.id),
-            "2026-09-11T10:00:00Z",
-            60,
-            None,
-        )
-        .unwrap();
+        let b = rdv_create(&conn, &c.id, Some(t.id), "2026-09-11T10:00:00Z", 60, None).unwrap();
         assert_eq!(b.statut, "planifie");
     }
 
@@ -1409,15 +1506,7 @@ mod tests {
             None,
         )
         .unwrap();
-        rdv_create(
-            &conn,
-            &c.id,
-            Some(t.id),
-            "2026-09-11T11:00:00Z",
-            60,
-            None,
-        )
-        .unwrap();
+        rdv_create(&conn, &c.id, Some(t.id), "2026-09-11T11:00:00Z", 60, None).unwrap();
         conn.execute(
             "INSERT INTO rappels_ntfy (id, rdv_id, type, ntfy_id, echeance, etat) VALUES (?1, ?2, '1h', 'fake-id', ?3, 'programme')",
             rusqlite::params![
@@ -1428,16 +1517,8 @@ mod tests {
         )
         .unwrap();
 
-        let err = rdv_update(
-            &conn,
-            &a.id,
-            &c.id,
-            None,
-            "2026-09-11T11:00:00Z",
-            60,
-            None,
-        )
-        .unwrap_err();
+        let err =
+            rdv_update(&conn, &a.id, &c.id, None, "2026-09-11T11:00:00Z", 60, None).unwrap_err();
         assert!(
             err.message.contains("chevauche") || err.message.contains("horaire"),
             "message: {}",
@@ -1481,5 +1562,82 @@ mod tests {
         assert_eq!(updated.stripe.secret_key, "sk_test_secret");
         assert_eq!(updated.ntfy.topic, "new-topic");
         assert!(!updated.ntfy.rappel_24h);
+    }
+
+    #[test]
+    fn clients_upsert_defaults_statut_en_cours() {
+        let conn = crate::db::open_memory().unwrap();
+        let c = seed_client(&conn);
+        assert_eq!(c.statut, "en_cours");
+        assert!(c.memo.is_none());
+        assert!(c.tarif_id.is_none());
+    }
+
+    #[test]
+    fn clients_upsert_roundtrip_dossier() {
+        let conn = crate::db::open_memory().unwrap();
+        migrate(&conn).unwrap();
+        let tarif = tarifs_upsert(&conn, None, "Consultation", 60, 5000).unwrap();
+        let c = clients_upsert(
+            &conn,
+            ClientWrite {
+                nom: "Alice".into(),
+                email: Some("a@b.c".into()),
+                telephone: Some("0600000000".into()),
+                statut: Some("pause".into()),
+                memo: Some("  WhatsApp  ".into()),
+                tarif_id: Some(tarif.id.clone()),
+                date_naissance: Some("1990-05-12".into()),
+                urgence_nom: Some("Paul".into()),
+                urgence_telephone: Some("0700000000".into()),
+                orientation: Some("medecin".into()),
+                frequence: Some("hebdo".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(c.statut, "pause");
+        assert_eq!(c.memo.as_deref(), Some("WhatsApp"));
+        assert_eq!(c.tarif_id.as_deref(), Some(tarif.id.as_str()));
+        assert_eq!(c.date_naissance.as_deref(), Some("1990-05-12"));
+        assert_eq!(c.urgence_nom.as_deref(), Some("Paul"));
+        assert_eq!(c.urgence_telephone.as_deref(), Some("0700000000"));
+        assert_eq!(c.orientation.as_deref(), Some("medecin"));
+        assert_eq!(c.frequence.as_deref(), Some("hebdo"));
+        let got = clients_get(&conn, &c.id).unwrap();
+        assert_eq!(got.statut, "pause");
+        assert_eq!(got.tarif_id, c.tarif_id);
+    }
+
+    #[test]
+    fn clients_upsert_rejects_invalid_statut() {
+        let conn = crate::db::open_memory().unwrap();
+        migrate(&conn).unwrap();
+        let err = clients_upsert(
+            &conn,
+            ClientWrite {
+                nom: "Alice".into(),
+                statut: Some("archive".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(err.message.contains("Statut"));
+    }
+
+    #[test]
+    fn clients_upsert_rejects_unknown_tarif() {
+        let conn = crate::db::open_memory().unwrap();
+        migrate(&conn).unwrap();
+        let err = clients_upsert(
+            &conn,
+            ClientWrite {
+                nom: "Alice".into(),
+                tarif_id: Some("missing".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(err.message.contains("tarif introuvable"));
     }
 }

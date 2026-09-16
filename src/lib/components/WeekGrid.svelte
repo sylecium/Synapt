@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import type { Rdv } from '$lib/types';
 	import { formatTime, sameLocalDay, slotUtcIso, weekDaysFromMonday } from '$lib/format';
 	import RdvContextMenu from '$lib/components/RdvContextMenu.svelte';
@@ -15,6 +16,8 @@
 	};
 
 	let { startMonday, rdvs, dayView = false, focusDay, onSlot, onRdv, onUpdated }: Props = $props();
+
+	let now = $state(new Date());
 
 	const GRID_START = 8 * 60;
 	const GRID_END = 20 * 60;
@@ -34,6 +37,17 @@
 	);
 
 	const gridHeight = $derived(slots.length * SLOT_HEIGHT);
+
+	const nowMins = $derived(now.getHours() * 60 + now.getMinutes());
+	const nowInGrid = $derived(nowMins >= GRID_START && nowMins < GRID_END);
+	const nowTop = $derived(((nowMins - GRID_START) / GRID_TOTAL) * 100);
+
+	onMount(() => {
+		const id = setInterval(() => {
+			now = new Date();
+		}, 30_000);
+		return () => clearInterval(id);
+	});
 
 	function isToday(day: Date): boolean {
 		return sameLocalDay(day, new Date());
@@ -125,6 +139,22 @@
 								</ContextMenu.Content>
 							</ContextMenu.Root>
 						{/each}
+						{#if today && nowInGrid}
+							<div
+								class="pointer-events-none absolute inset-x-0 z-20 -translate-y-1/2"
+								style="top:{nowTop}%"
+							>
+								<div class="flex items-center">
+									<span
+										class="bg-destructive text-destructive-foreground ml-0.5 rounded px-1 font-mono text-[10px] leading-4 tabular-nums"
+									>
+										{timeLabel(now.getHours(), now.getMinutes())}
+									</span>
+									<span class="bg-destructive size-1.5 shrink-0 rounded-full"></span>
+									<div class="bg-destructive h-px flex-1"></div>
+								</div>
+							</div>
+						{/if}
 						{#each rdvsForDay(day).filter(rdvInGrid) as rdv (rdv.id)}
 							<RdvContextMenu {rdv} onOpen={() => onRdv(rdv)} {onUpdated}>
 								{#snippet children(props)}
