@@ -58,6 +58,7 @@ pub fn run() {
             commands::clients_list,
             commands::clients_get,
             commands::clients_upsert,
+            commands::clients_delete,
             commands::tarifs_list,
             commands::tarifs_upsert,
             commands::tarifs_set_actif,

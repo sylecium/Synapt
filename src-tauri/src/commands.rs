@@ -536,6 +536,39 @@ pub mod repo {
         Ok(client)
     }
 
+    pub fn clients_delete(conn: &Connection, id: &str) -> Result<(), AppError> {
+        ensure_migrated(conn)?;
+        let exists: bool = conn.query_row(
+            "SELECT COUNT(*) FROM clients WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Err(AppError::new("client introuvable"));
+        }
+        let planifies: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM rdv WHERE client_id = ?1 AND statut = 'planifie'",
+            params![id],
+            |row| row.get(0),
+        )?;
+        if planifies > 0 {
+            return Err(AppError::new(
+                "Ce client a encore des rendez-vous prévus. Annule-les avant de supprimer la fiche.",
+            ));
+        }
+
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
+            "DELETE FROM rappels_ntfy WHERE rdv_id IN (SELECT id FROM rdv WHERE client_id = ?1)",
+            params![id],
+        )?;
+        tx.execute("DELETE FROM rdv WHERE client_id = ?1", params![id])?;
+        tx.execute("DELETE FROM notes WHERE client_id = ?1", params![id])?;
+        tx.execute("DELETE FROM clients WHERE id = ?1", params![id])?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn tarifs_upsert(
         conn: &Connection,
         id: Option<&str>,
@@ -910,6 +943,11 @@ pub fn clients_list() -> Result<Vec<Client>, String> {
 #[tauri::command(rename_all = "snake_case")]
 pub fn clients_get(id: String) -> Result<Client, String> {
     with_db(|conn| repo::clients_get(conn, &id)).map_err(|e| e.message)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn clients_delete(id: String) -> Result<(), String> {
+    with_db(|conn| repo::clients_delete(conn, &id)).map_err(|e| e.message)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1639,5 +1677,68 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.message.contains("tarif introuvable"));
+    }
+
+    #[test]
+    fn clients_delete_fiche_seule() {
+        let conn = crate::db::open_memory().unwrap();
+        let c = seed_client(&conn);
+        clients_delete(&conn, &c.id).unwrap();
+        assert!(clients_get(&conn, &c.id).is_err());
+    }
+
+    #[test]
+    fn clients_delete_cascade_notes_rdv_annule_rappels() {
+        let conn = crate::db::open_memory().unwrap();
+        let alice = seed_client(&conn);
+        let bob = clients_upsert(
+            &conn,
+            ClientWrite {
+                nom: "Bob".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        notes_upsert(&conn, None, Some(&alice.id), "note alice").unwrap();
+        notes_upsert(&conn, None, Some(&bob.id), "note bob").unwrap();
+        let rdv = rdv_create(&conn, &alice.id, None, "2026-09-11T10:00:00Z", 60, None).unwrap();
+        rdv_annuler(&conn, &rdv.id).unwrap();
+        conn.execute(
+            "INSERT INTO rappels_ntfy (id, rdv_id, type, ntfy_id, echeance, etat) VALUES (?1, ?2, '1h', 'fake-id', ?3, 'annule')",
+            rusqlite::params![Uuid::new_v4().to_string(), rdv.id, "2026-09-11T09:00:00Z"],
+        )
+        .unwrap();
+
+        clients_delete(&conn, &alice.id).unwrap();
+
+        assert!(clients_get(&conn, &alice.id).is_err());
+        assert_eq!(clients_get(&conn, &bob.id).unwrap().nom, "Bob");
+        assert!(notes_list(&conn, Some(alice.id.clone()), false)
+            .unwrap()
+            .is_empty());
+        assert_eq!(notes_list(&conn, Some(bob.id.clone()), false).unwrap().len(), 1);
+        assert!(rdv_list(&conn, None, None, Some(&alice.id)).unwrap().is_empty());
+        let rappels: i64 = conn
+            .query_row("SELECT COUNT(*) FROM rappels_ntfy", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rappels, 0);
+    }
+
+    #[test]
+    fn clients_delete_refuse_rdv_planifie() {
+        let conn = crate::db::open_memory().unwrap();
+        let c = seed_client(&conn);
+        rdv_create(&conn, &c.id, None, "2026-09-11T10:00:00Z", 60, None).unwrap();
+        let err = clients_delete(&conn, &c.id).unwrap_err();
+        assert!(err.message.contains("rendez-vous prévus"));
+        assert_eq!(clients_get(&conn, &c.id).unwrap().nom, "Alice");
+    }
+
+    #[test]
+    fn clients_delete_inconnu() {
+        let conn = crate::db::open_memory().unwrap();
+        migrate(&conn).unwrap();
+        let err = clients_delete(&conn, "missing").unwrap_err();
+        assert_eq!(err.message, "client introuvable");
     }
 }

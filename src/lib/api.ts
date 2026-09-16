@@ -27,6 +27,8 @@ export const clientsList = () => invoke<Client[]>('clients_list');
 
 export const clientsGet = (id: string) => invoke<Client>('clients_get', { id });
 
+export const clientsDelete = (id: string) => invoke<void>('clients_delete', { id });
+
 export const clientsUpsert = (p: {
 	id?: string;
 	nom: string;

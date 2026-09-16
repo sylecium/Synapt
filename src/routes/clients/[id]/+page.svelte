@@ -1,8 +1,10 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
 	import Trash2Icon from '@lucide/svelte/icons/trash-2';
 	import {
+		clientsDelete,
 		clientsGet,
 		clientsUpsert,
 		notesDelete,
@@ -35,6 +37,7 @@
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
 	import * as ContextMenu from '$lib/components/ui/context-menu/index.js';
+	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
 
@@ -63,6 +66,8 @@
 	let editingId = $state<string | null>(null);
 	let saveTimer: ReturnType<typeof setTimeout> | null = null;
 	let pendingId: string | null = null;
+	let deleteOpen = $state(false);
+	let deleting = $state(false);
 
 	const NONE = 'none';
 	const bornes = $derived(rdvBornes(rdvs));
@@ -226,10 +231,25 @@
 		rdvDialogOpen = false;
 		load(clientId);
 	}
+
+	async function confirmDelete() {
+		deleting = true;
+		try {
+			await clientsDelete(clientId);
+			toast.success('Client supprimé');
+			await goto('/clients');
+		} catch (e) {
+			toast.error(userMessage(e));
+		} finally {
+			deleting = false;
+			deleteOpen = false;
+		}
+	}
 </script>
 
 <div class="flex flex-col gap-4 p-4">
 	<PageHeader title={client?.nom ?? 'Fiche client'}>
+		<Button variant="outline" onclick={() => (deleteOpen = true)}>Supprimer</Button>
 		<Button onclick={() => (rdvDialogOpen = true)}>Nouveau RDV</Button>
 	</PageHeader>
 	{#if client && !initial}
@@ -491,3 +511,20 @@
 	}}
 	onUpdated={() => load(clientId)}
 />
+
+<Dialog.Root bind:open={deleteOpen}>
+	<Dialog.Content>
+		<Dialog.Header>
+			<Dialog.Title>Supprimer {client?.nom ?? 'ce client'} ?</Dialog.Title>
+			<Dialog.Description>
+				Les notes et les rendez-vous annulés seront aussi supprimés.
+			</Dialog.Description>
+		</Dialog.Header>
+		<Dialog.Footer>
+			<Button variant="outline" onclick={() => (deleteOpen = false)}>Annuler</Button>
+			<Button variant="destructive" onclick={confirmDelete} disabled={deleting}>
+				Supprimer
+			</Button>
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>
