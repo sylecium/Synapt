@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, untrack } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import CopyIcon from '@lucide/svelte/icons/copy';
 	import VideoIcon from '@lucide/svelte/icons/video';
@@ -44,7 +44,7 @@
 	let stripeBusy = $state(false);
 	let saveTimer: ReturnType<typeof setTimeout> | null = null;
 	let flushInFlight: Promise<void> | null = null;
-	let loadedRdvId = $state<string | null>(null);
+	let loadedRdvId: string | null = null;
 	let panelGen = 0;
 
 	const rdv = $derived(detail?.rdv ?? null);
@@ -59,31 +59,36 @@
 	);
 
 	$effect(() => {
-		const gen = ++panelGen;
-		if (open && rdvId) {
-			if (loadedRdvId && loadedRdvId !== rdvId) {
+		const id = rdvId;
+		const isOpen = open;
+
+		untrack(() => {
+			const gen = ++panelGen;
+			if (isOpen && id) {
+				if (loadedRdvId && loadedRdvId !== id) {
+					void (async () => {
+						await flushNote();
+						if (gen !== panelGen) return;
+						loadedRdvId = id;
+						await loadDetail(id, gen);
+					})();
+				} else {
+					loadedRdvId = id;
+					void loadDetail(id, gen);
+				}
+			} else if (!isOpen) {
 				void (async () => {
 					await flushNote();
 					if (gen !== panelGen) return;
-					loadedRdvId = rdvId;
-					await loadDetail(rdvId, gen);
+					detail = null;
+					loadedRdvId = null;
 				})();
-			} else {
-				loadedRdvId = rdvId;
-				void loadDetail(rdvId, gen);
 			}
-		} else if (!open) {
-			void (async () => {
-				await flushNote();
-				if (gen !== panelGen) return;
-				detail = null;
-				loadedRdvId = null;
-			})();
-		}
+		});
 	});
 
 	onDestroy(() => {
-		if (saveTimer) void flushNote();
+		void flushNote();
 	});
 
 	onMount(async () => {
@@ -177,27 +182,44 @@
 	}
 
 	async function flushNote() {
-		if (flushInFlight) return flushInFlight;
-		flushInFlight = flushNoteNow();
-		try {
-			await flushInFlight;
-		} finally {
-			flushInFlight = null;
-		}
-	}
+		for (;;) {
+			if (flushInFlight) {
+				await flushInFlight;
+				continue;
+			}
+			if (saveTimer) {
+				clearTimeout(saveTimer);
+				saveTimer = null;
+			}
+			const snapshot = untrack(() => {
+				const current = detail?.rdv;
+				if (!current || current.statut === 'annule') return null;
+				return { id: current.id, note: current.note ?? null };
+			});
+			if (!snapshot) return;
 
-	async function flushNoteNow() {
-		if (saveTimer) {
-			clearTimeout(saveTimer);
-			saveTimer = null;
-		}
-		const current = rdv;
-		if (!current || current.statut === 'annule') return;
-		try {
-			const updated = await rdvSetNote(current.id, current.note);
+			const run = (async () => {
+				try {
+					return await rdvSetNote(snapshot.id, snapshot.note);
+				} catch (e) {
+					toast.error(userMessage(e));
+					throw e;
+				}
+			})();
+			flushInFlight = run.then(() => {}).finally(() => {
+				flushInFlight = null;
+			});
+			let updated: Rdv;
+			try {
+				updated = await run;
+			} catch {
+				return;
+			}
+
+			const latest = untrack(() => detail?.rdv?.note ?? null);
+			if (latest !== snapshot.note) continue;
 			applyRdv(updated);
-		} catch (e) {
-			toast.error(userMessage(e));
+			return;
 		}
 	}
 
