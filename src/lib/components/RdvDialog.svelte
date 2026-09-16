@@ -156,6 +156,7 @@
 	}
 
 	async function submit() {
+		if (!formReady) return;
 		if (!clientId) {
 			toast.error('Sélectionnez un client');
 			return;
@@ -305,7 +306,7 @@
 		</div>
 		<Dialog.Footer>
 			<Button variant="outline" onclick={() => handleOpenChange(false)}>Annuler</Button>
-			<Button onclick={submit} disabled={saving}>{isEdit ? 'Enregistrer' : 'Créer'}</Button>
+			<Button onclick={submit} disabled={!formReady || saving}>{isEdit ? 'Enregistrer' : 'Créer'}</Button>
 		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>

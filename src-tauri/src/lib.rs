@@ -6,6 +6,7 @@ pub mod error;
 pub mod models;
 pub mod ntfy;
 pub mod overlap;
+pub mod repo;
 pub mod settings;
 pub mod stripe;
 
@@ -70,6 +71,7 @@ pub fn run() {
             commands::rdv_create,
             commands::rdv_update,
             commands::rdv_annuler,
+            commands::rdv_set_note,
             commands::rdv_dashboard,
             commands::stripe_ensure_link,
             commands::ntfy_test,

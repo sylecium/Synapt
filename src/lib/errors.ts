@@ -43,6 +43,13 @@ export function userMessage(err: unknown): string {
 		return "La notification n'a pas pu être envoyée. Vérifiez ntfy dans les réglages.";
 	}
 	if (
+		lower.includes('database is locked') ||
+		lower.includes('database is busy') ||
+		(lower.includes('sqlite') && lower.includes('locked'))
+	) {
+		return "Impossible d'enregistrer pour le moment. Réessayez.";
+	}
+	if (
 		lower.includes('invalid args') ||
 		lower.includes('missing required key') ||
 		lower.includes('error invoking') ||

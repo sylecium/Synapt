@@ -20,13 +20,27 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": "'self' customprotocol: asset:",
+        "connect-src": "ipc: http://ipc.localhost",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' asset: http://asset.localhost blob: data:",
+        "font-src": "'self' data:"
+      },
+      "devCsp": {
+        "default-src": "'self' customprotocol: asset: http://localhost:1420",
+        "connect-src": "ipc: http://ipc.localhost http://localhost:1420 ws://localhost:1420",
+        "script-src": "'self' 'unsafe-eval' http://localhost:1420",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' asset: http://asset.localhost blob: data:",
+        "font-src": "'self' data:"
+      }
     }
   },
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
-    "targets": "all",
+    "targets": "deb",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

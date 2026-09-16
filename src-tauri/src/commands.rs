@@ -1,15 +1,19 @@
-use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone, Utc};
-use rusqlite::{params, Connection, Row};
+use std::sync::Mutex;
+
+use chrono::{DateTime, Utc};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::db::{db_path, migrate, open_file};
 use crate::error::AppError;
-use crate::models::{Client, ClientWrite, Dashboard, Note, RappelNtfy, Rdv, RdvDetail, Tarif};
+use crate::models::{Client, ClientWrite, Dashboard, Note, Rdv, RdvDetail, Tarif};
 use crate::ntfy::{echeance, ntfy_delete, should_publish, NtfyClient, RappelKind, ReqwestNtfy};
-use crate::overlap::overlaps;
+use crate::repo::{self, ensure_migrated, fetch_rdv, list_rdvs_planifies, now_iso};
 use crate::settings::{load_settings, save_settings, Settings, SettingsPublic};
 use crate::stripe::stripe_create_payment_link;
+
+static DB_MUTEX: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RdvCreateResult {
@@ -25,108 +29,19 @@ pub struct SettingsSetInput {
     pub rappel_24h: bool,
     pub rappel_1h: bool,
     pub stripe_secret_key: String,
-}
-
-pub fn jitsi_url(id: &str) -> String {
-    format!("https://meet.jit.si/synapt-{id}")
-}
-
-const RDV_SELECT: &str = "\
-SELECT rdv.id, rdv.client_id, rdv.tarif_id, rdv.debut, rdv.duree_minutes, \
-rdv.jitsi_url, rdv.stripe_url, rdv.stripe_id, rdv.note, rdv.statut, \
-rdv.created_at, rdv.updated_at, clients.nom AS client_nom, \
-COALESCE(tarifs.nom, '') AS tarif_nom \
-FROM rdv \
-JOIN clients ON clients.id = rdv.client_id \
-LEFT JOIN tarifs ON tarifs.id = rdv.tarif_id";
-
-fn now_iso() -> String {
-    Utc::now().to_rfc3339()
+    pub ntfy_token_clear: bool,
+    pub stripe_secret_clear: bool,
 }
 
 fn with_db<F, T>(f: F) -> Result<T, AppError>
 where
     F: FnOnce(&Connection) -> Result<T, AppError>,
 {
+    let _guard = DB_MUTEX.lock().unwrap();
     let path = db_path()?;
     let conn = open_file(&path)?;
     migrate(&conn)?;
     f(&conn)
-}
-
-fn ensure_migrated(conn: &Connection) -> Result<(), AppError> {
-    migrate(conn)
-}
-
-const CLIENT_SELECT: &str = "SELECT id, nom, email, telephone, statut, memo, tarif_id,
-    date_naissance, urgence_nom, urgence_telephone, orientation, frequence,
-    created_at, updated_at FROM clients";
-
-fn row_to_client(row: &Row<'_>) -> Result<Client, rusqlite::Error> {
-    Ok(Client {
-        id: row.get("id")?,
-        nom: row.get("nom")?,
-        email: row.get("email")?,
-        telephone: row.get("telephone")?,
-        statut: row.get("statut")?,
-        memo: row.get("memo")?,
-        tarif_id: row.get("tarif_id")?,
-        date_naissance: row.get("date_naissance")?,
-        urgence_nom: row.get("urgence_nom")?,
-        urgence_telephone: row.get("urgence_telephone")?,
-        orientation: row.get("orientation")?,
-        frequence: row.get("frequence")?,
-        created_at: row.get("created_at")?,
-        updated_at: row.get("updated_at")?,
-    })
-}
-
-fn row_to_tarif(row: &Row<'_>) -> Result<Tarif, rusqlite::Error> {
-    Ok(Tarif {
-        id: row.get("id")?,
-        nom: row.get("nom")?,
-        duree_minutes: row.get("duree_minutes")?,
-        prix_centimes: row.get("prix_centimes")?,
-        actif: row.get::<_, i64>("actif")? != 0,
-        created_at: row.get("created_at")?,
-        updated_at: row.get("updated_at")?,
-    })
-}
-
-fn row_to_rdv(row: &Row<'_>) -> Result<Rdv, rusqlite::Error> {
-    Ok(Rdv {
-        id: row.get("id")?,
-        client_id: row.get("client_id")?,
-        tarif_id: row.get("tarif_id")?,
-        debut: row.get("debut")?,
-        duree_minutes: row.get("duree_minutes")?,
-        jitsi_url: row.get("jitsi_url")?,
-        stripe_url: row.get("stripe_url")?,
-        stripe_id: row.get("stripe_id")?,
-        note: row.get("note")?,
-        statut: row.get("statut")?,
-        created_at: row.get("created_at")?,
-        updated_at: row.get("updated_at")?,
-        client_nom: row.get("client_nom")?,
-        tarif_nom: row.get("tarif_nom")?,
-    })
-}
-
-fn row_to_note(row: &Row<'_>) -> Result<Note, rusqlite::Error> {
-    Ok(Note {
-        id: row.get("id")?,
-        client_id: row.get("client_id")?,
-        corps: row.get("corps")?,
-        created_at: row.get("created_at")?,
-        updated_at: row.get("updated_at")?,
-    })
-}
-
-fn fetch_rdv(conn: &Connection, id: &str) -> Result<Rdv, AppError> {
-    let sql = format!("{RDV_SELECT} WHERE rdv.id = ?1");
-    let mut stmt = conn.prepare(&sql)?;
-    let rdv = stmt.query_row(params![id], row_to_rdv)?;
-    Ok(rdv)
 }
 
 fn fetch_client_nom(conn: &Connection, client_id: &str) -> Result<String, AppError> {
@@ -142,8 +57,18 @@ fn fetch_tarif(conn: &Connection, tarif_id: &str) -> Result<Tarif, AppError> {
     let mut stmt = conn.prepare(
         "SELECT id, nom, duree_minutes, prix_centimes, actif, created_at, updated_at FROM tarifs WHERE id = ?1",
     )?;
-    stmt.query_row(params![tarif_id], row_to_tarif)
-        .map_err(|_| AppError::new("tarif introuvable"))
+    stmt.query_row(params![tarif_id], |row| {
+        Ok(Tarif {
+            id: row.get(0)?,
+            nom: row.get(1)?,
+            duree_minutes: row.get(2)?,
+            prix_centimes: row.get(3)?,
+            actif: row.get::<_, i64>(4)? != 0,
+            created_at: row.get(5)?,
+            updated_at: row.get(6)?,
+        })
+    })
+    .map_err(|_| AppError::new("tarif introuvable"))
 }
 
 fn rappel_deja_programme(
@@ -188,22 +113,46 @@ fn kinds_for_settings(settings: &Settings) -> Vec<RappelKind> {
     kinds
 }
 
-pub fn ntfy_sync<C: NtfyClient>(
+struct PendingNtfyJob {
+    rdv_id: String,
+    kind: RappelKind,
+    echeance_at: DateTime<Utc>,
+    client_nom: String,
+    debut: DateTime<Utc>,
+    jitsi_url: String,
+    replace_ntfy_id: Option<String>,
+}
+
+fn existing_rappel_ntfy_id(
+    conn: &Connection,
+    rdv_id: &str,
+    kind: RappelKind,
+) -> Result<Option<String>, AppError> {
+    conn.query_row(
+        "SELECT ntfy_id FROM rappels_ntfy WHERE rdv_id = ?1 AND type = ?2",
+        params![rdv_id, kind.as_str()],
+        |row| row.get::<_, Option<String>>(0),
+    )
+    .optional()
+    .map_err(AppError::from)
+    .map(|opt| opt.flatten())
+}
+
+fn ntfy_collect_pending(
     conn: &Connection,
     settings: &Settings,
     now: DateTime<Utc>,
-    client_factory: impl Fn(&Rdv, RappelKind) -> C,
-) -> Result<Vec<String>, AppError> {
+    only_rdv_id: Option<&str>,
+) -> Result<Vec<PendingNtfyJob>, AppError> {
     ensure_migrated(conn)?;
-    let mut warnings = Vec::new();
-    let sql = format!("{RDV_SELECT} WHERE rdv.statut = 'planifie'");
-    let mut stmt = conn.prepare(&sql)?;
-    let rdvs = stmt
-        .query_map([], row_to_rdv)?
-        .collect::<Result<Vec<_>, _>>()?;
-
+    let rdvs = list_rdvs_planifies(conn)?;
+    let mut jobs = Vec::new();
     for rdv in rdvs {
-        let debut: DateTime<Utc> = rdv.debut.parse()?;
+        if only_rdv_id.is_some_and(|id| id != rdv.id) {
+            continue;
+        }
+        let debut = repo::parse_debut_utc(&rdv.debut)?;
+        let client_nom = fetch_client_nom(conn, &rdv.client_id)?;
         for kind in kinds_for_settings(settings) {
             let echeance_at = echeance(debut, kind);
             let deja = rappel_deja_programme(conn, &rdv.id, kind)?;
@@ -217,19 +166,99 @@ pub fn ntfy_sync<C: NtfyClient>(
             ) {
                 continue;
             }
-            let ntfy_client = client_factory(&rdv, kind);
-            match ntfy_client.publish(echeance_at, kind) {
-                Ok(ntfy_id) => {
-                    insert_rappel(conn, &rdv.id, kind, &ntfy_id, echeance_at)?;
-                }
-                Err(e) => {
-                    eprintln!("ntfy_sync publish: {}", e.message);
+            let replace_ntfy_id = existing_rappel_ntfy_id(conn, &rdv.id, kind)?;
+            jobs.push(PendingNtfyJob {
+                rdv_id: rdv.id.clone(),
+                kind,
+                echeance_at,
+                client_nom: client_nom.clone(),
+                debut,
+                jitsi_url: rdv.jitsi_url.clone(),
+                replace_ntfy_id,
+            });
+        }
+    }
+    Ok(jobs)
+}
+
+pub fn ntfy_sync<C: NtfyClient>(
+    conn: &Connection,
+    settings: &Settings,
+    now: DateTime<Utc>,
+    client_factory: impl Fn(&Rdv, RappelKind) -> C,
+) -> Result<Vec<String>, AppError> {
+    let jobs = ntfy_collect_pending(conn, settings, now, None)?;
+    let mut warnings = Vec::new();
+    let rdvs = list_rdvs_planifies(conn)?;
+    for job in jobs {
+        let rdv = rdvs
+            .iter()
+            .find(|r| r.id == job.rdv_id)
+            .ok_or_else(|| AppError::new("rdv introuvable"))?;
+        let ntfy_client = client_factory(rdv, job.kind);
+        match ntfy_client.publish(job.echeance_at, job.kind) {
+            Ok(ntfy_id) => {
+                if let Err(e) = insert_rappel(
+                    conn,
+                    &job.rdv_id,
+                    job.kind,
+                    &ntfy_id,
+                    job.echeance_at,
+                ) {
                     warnings.push(e.message);
                 }
+            }
+            Err(e) => {
+                eprintln!("ntfy_sync publish: {}", e.message);
+                warnings.push(e.message);
             }
         }
     }
     Ok(warnings)
+}
+
+async fn ntfy_run_pending_jobs(settings: &Settings, jobs: Vec<PendingNtfyJob>) -> Vec<String> {
+    let mut warnings = Vec::new();
+    for job in jobs {
+        let ntfy = ReqwestNtfy::for_rdv(
+            settings,
+            &job.client_nom,
+            job.debut,
+            &job.jitsi_url,
+            job.kind,
+        );
+        match ntfy.publish_async(job.echeance_at).await {
+            Ok(ntfy_id) => {
+                if let Some(old) = job.replace_ntfy_id {
+                    if old != ntfy_id {
+                        if let Err(e) = ntfy_delete(settings, &old).await {
+                            eprintln!("ntfy delete old: {}", e.message);
+                            warnings.push(e.message);
+                        }
+                    }
+                }
+                if let Err(e) = with_db(|conn| {
+                    insert_rappel(conn, &job.rdv_id, job.kind, &ntfy_id, job.echeance_at)
+                }) {
+                    eprintln!("ntfy insert rappel: {}", e.message);
+                    warnings.push(e.message);
+                }
+            }
+            Err(e) => {
+                eprintln!("ntfy publish: {}", e.message);
+                warnings.push(e.message);
+            }
+        }
+    }
+    warnings
+}
+
+async fn ntfy_schedule_rdv(settings: &Settings, rdv_id: &str, now: DateTime<Utc>) -> Vec<String> {
+    let jobs = match with_db(|conn| ntfy_collect_pending(conn, settings, now, Some(rdv_id))) {
+        Ok(j) => j,
+        Err(e) => return vec![e.message],
+    };
+    ntfy_run_pending_jobs(settings, jobs).await
 }
 
 fn rappels_ntfy_ids(conn: &Connection, rdv_id: &str) -> Result<Vec<String>, AppError> {
@@ -274,59 +303,6 @@ async fn cancel_rappels_ntfy(settings: &Settings, rdv_id: &str) -> Vec<String> {
     warnings
 }
 
-async fn ntfy_schedule_rdv(settings: &Settings, rdv: &Rdv, now: DateTime<Utc>) -> Vec<String> {
-    let mut warnings = Vec::new();
-    let debut: DateTime<Utc> = match rdv.debut.parse() {
-        Ok(d) => d,
-        Err(e) => {
-            warnings.push(e.to_string());
-            return warnings;
-        }
-    };
-
-    for kind in kinds_for_settings(settings) {
-        let echeance_at = echeance(debut, kind);
-        let should = match with_db(|conn| {
-            let deja = rappel_deja_programme(conn, &rdv.id, kind)?;
-            Ok(should_publish(
-                &settings.ntfy.topic,
-                true,
-                &rdv.statut,
-                now,
-                echeance_at,
-                deja,
-            ))
-        }) {
-            Ok(v) => v,
-            Err(e) => {
-                warnings.push(e.message);
-                continue;
-            }
-        };
-        if !should {
-            continue;
-        }
-
-        let client_nom = with_db(|conn| fetch_client_nom(conn, &rdv.client_id)).unwrap_or_default();
-        let ntfy = ReqwestNtfy::for_rdv(&settings, &client_nom, debut, &rdv.jitsi_url, kind);
-        match ntfy.publish_async(echeance_at).await {
-            Ok(ntfy_id) => {
-                if let Err(e) =
-                    with_db(|conn| insert_rappel(conn, &rdv.id, kind, &ntfy_id, echeance_at))
-                {
-                    eprintln!("ntfy insert rappel: {}", e.message);
-                    warnings.push(e.message);
-                }
-            }
-            Err(e) => {
-                eprintln!("ntfy publish: {}", e.message);
-                warnings.push(e.message);
-            }
-        }
-    }
-    warnings
-}
-
 struct StripeTarifData {
     nom: String,
     prix_centimes: i64,
@@ -366,558 +342,73 @@ fn save_stripe_link(
     fetch_rdv(conn, rdv_id)
 }
 
-fn local_day_bounds(now: DateTime<Utc>) -> (DateTime<Utc>, DateTime<Utc>) {
-    let local = now.with_timezone(&Local);
-    let day_start = local.date_naive().and_hms_opt(0, 0, 0).unwrap();
-    let day_end = day_start + Duration::days(1);
-    let start_utc = Local
-        .from_local_datetime(&day_start)
-        .single()
-        .unwrap()
-        .with_timezone(&Utc);
-    let end_utc = Local
-        .from_local_datetime(&day_end)
-        .single()
-        .unwrap()
-        .with_timezone(&Utc);
-    (start_utc, end_utc)
+fn clear_stripe_link(conn: &Connection, rdv_id: &str) -> Result<Rdv, AppError> {
+    let now = now_iso();
+    conn.execute(
+        "UPDATE rdv SET stripe_url = NULL, stripe_id = NULL, updated_at = ?1 WHERE id = ?2",
+        params![now, rdv_id],
+    )?;
+    fetch_rdv(conn, rdv_id)
 }
 
-pub mod repo {
-    use super::*;
-
-    fn trim_opt(s: Option<String>) -> Option<String> {
-        s.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
-    }
-
-    fn parse_statut(s: Option<String>) -> Result<String, AppError> {
-        let v = trim_opt(s).unwrap_or_else(|| "en_cours".to_string());
-        match v.as_str() {
-            "en_cours" | "pause" | "termine" => Ok(v),
-            _ => Err(AppError::new("Statut de suivi inconnu.")),
+async fn ensure_stripe_on_rdv(
+    settings: &Settings,
+    rdv: Rdv,
+    recreate: bool,
+) -> Result<(Rdv, Vec<String>), AppError> {
+    let mut warnings = Vec::new();
+    let tarif_data = with_db(|conn| stripe_tarif_data(conn, &rdv, settings))?;
+    if tarif_data.is_none() {
+        if rdv.stripe_url.is_some() {
+            let cleared = with_db(|conn| clear_stripe_link(conn, &rdv.id))?;
+            return Ok((cleared, warnings));
         }
+        return Ok((rdv, warnings));
     }
-
-    fn parse_choice(
-        value: Option<String>,
-        allowed: &[&str],
-        err: &str,
-    ) -> Result<Option<String>, AppError> {
-        let Some(v) = trim_opt(value) else {
-            return Ok(None);
-        };
-        if allowed.contains(&v.as_str()) {
-            Ok(Some(v))
-        } else {
-            Err(AppError::new(err))
+    if rdv.stripe_url.is_some() && !recreate {
+        return Ok((rdv, warnings));
+    }
+    let data = tarif_data.unwrap();
+    match stripe_create_payment_link(&settings.stripe.secret_key, &data.nom, data.prix_centimes)
+        .await
+    {
+        Ok((stripe_id, stripe_url)) => {
+            let updated =
+                with_db(|conn| save_stripe_link(conn, &rdv.id, &stripe_id, &stripe_url))?;
+            Ok((updated, warnings))
         }
-    }
-
-    fn parse_date_naissance(value: Option<String>) -> Result<Option<String>, AppError> {
-        let Some(v) = trim_opt(value) else {
-            return Ok(None);
-        };
-        NaiveDate::parse_from_str(&v, "%Y-%m-%d")
-            .map_err(|_| AppError::new("La date de naissance n'est pas valide."))?;
-        Ok(Some(v))
-    }
-
-    pub fn clients_upsert(conn: &Connection, write: ClientWrite) -> Result<Client, AppError> {
-        ensure_migrated(conn)?;
-        let nom = write.nom.trim();
-        if nom.is_empty() {
-            return Err(AppError::new("Le nom est requis."));
+        Err(e) => {
+            eprintln!("stripe: {}", e.message);
+            warnings.push(e.message);
+            Ok((rdv, warnings))
         }
-        let email = trim_opt(write.email);
-        let telephone = trim_opt(write.telephone);
-        let statut = parse_statut(write.statut)?;
-        let memo = trim_opt(write.memo);
-        if memo.as_ref().is_some_and(|m| m.chars().count() > 120) {
-            return Err(AppError::new("Le mémo est trop long (120 caractères max)."));
-        }
-        let tarif_id = trim_opt(write.tarif_id);
-        if let Some(tid) = tarif_id.as_deref() {
-            let n: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM tarifs WHERE id = ?1",
-                params![tid],
-                |row| row.get(0),
-            )?;
-            if n == 0 {
-                return Err(AppError::new("tarif introuvable"));
-            }
-        }
-        let date_naissance = parse_date_naissance(write.date_naissance)?;
-        let urgence_nom = trim_opt(write.urgence_nom);
-        let urgence_telephone = trim_opt(write.urgence_telephone);
-        let orientation = parse_choice(
-            write.orientation,
-            &["medecin", "reco", "lui_meme"],
-            "Orientation inconnue.",
-        )?;
-        let frequence = parse_choice(
-            write.frequence,
-            &["hebdo", "bimensuel", "a_la_demande"],
-            "Fréquence inconnue.",
-        )?;
-
-        let now = now_iso();
-        let id = match write.id {
-            Some(existing) => existing,
-            None => Uuid::new_v4().to_string(),
-        };
-
-        let exists: bool = conn.query_row(
-            "SELECT COUNT(*) FROM clients WHERE id = ?1",
-            params![id],
-            |row| row.get(0),
-        )?;
-
-        if exists {
-            conn.execute(
-                "UPDATE clients SET nom = ?1, email = ?2, telephone = ?3, statut = ?4, memo = ?5,
-                 tarif_id = ?6, date_naissance = ?7, urgence_nom = ?8, urgence_telephone = ?9,
-                 orientation = ?10, frequence = ?11, updated_at = ?12 WHERE id = ?13",
-                params![
-                    nom,
-                    email,
-                    telephone,
-                    statut,
-                    memo,
-                    tarif_id,
-                    date_naissance,
-                    urgence_nom,
-                    urgence_telephone,
-                    orientation,
-                    frequence,
-                    now,
-                    id
-                ],
-            )?;
-        } else {
-            conn.execute(
-                "INSERT INTO clients (
-                   id, nom, email, telephone, statut, memo, tarif_id, date_naissance,
-                   urgence_nom, urgence_telephone, orientation, frequence, created_at, updated_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)",
-                params![
-                    id,
-                    nom,
-                    email,
-                    telephone,
-                    statut,
-                    memo,
-                    tarif_id,
-                    date_naissance,
-                    urgence_nom,
-                    urgence_telephone,
-                    orientation,
-                    frequence,
-                    now
-                ],
-            )?;
-        }
-
-        clients_get(conn, &id)
-    }
-
-    pub fn clients_list(conn: &Connection) -> Result<Vec<Client>, AppError> {
-        ensure_migrated(conn)?;
-        let mut stmt = conn.prepare(&format!("{CLIENT_SELECT} ORDER BY nom"))?;
-        let clients = stmt
-            .query_map([], row_to_client)?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(clients)
-    }
-
-    pub fn clients_get(conn: &Connection, id: &str) -> Result<Client, AppError> {
-        ensure_migrated(conn)?;
-        let mut stmt = conn.prepare(&format!("{CLIENT_SELECT} WHERE id = ?1"))?;
-        let client = stmt.query_row(params![id], row_to_client)?;
-        Ok(client)
-    }
-
-    pub fn clients_delete(conn: &Connection, id: &str) -> Result<(), AppError> {
-        ensure_migrated(conn)?;
-        let exists: bool = conn.query_row(
-            "SELECT COUNT(*) FROM clients WHERE id = ?1",
-            params![id],
-            |row| row.get(0),
-        )?;
-        if !exists {
-            return Err(AppError::new("client introuvable"));
-        }
-        let planifies: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM rdv WHERE client_id = ?1 AND statut = 'planifie'",
-            params![id],
-            |row| row.get(0),
-        )?;
-        if planifies > 0 {
-            return Err(AppError::new(
-                "Ce client a encore des rendez-vous prévus. Annule-les avant de supprimer la fiche.",
-            ));
-        }
-
-        let tx = conn.unchecked_transaction()?;
-        tx.execute(
-            "DELETE FROM rappels_ntfy WHERE rdv_id IN (SELECT id FROM rdv WHERE client_id = ?1)",
-            params![id],
-        )?;
-        tx.execute("DELETE FROM rdv WHERE client_id = ?1", params![id])?;
-        tx.execute("DELETE FROM notes WHERE client_id = ?1", params![id])?;
-        tx.execute("DELETE FROM clients WHERE id = ?1", params![id])?;
-        tx.commit()?;
-        Ok(())
-    }
-
-    pub fn tarifs_upsert(
-        conn: &Connection,
-        id: Option<&str>,
-        nom: &str,
-        duree_minutes: i64,
-        prix_centimes: i64,
-    ) -> Result<Tarif, AppError> {
-        ensure_migrated(conn)?;
-        let now = now_iso();
-        let id = match id {
-            Some(existing) => existing.to_string(),
-            None => Uuid::new_v4().to_string(),
-        };
-
-        let exists: bool = conn.query_row(
-            "SELECT COUNT(*) FROM tarifs WHERE id = ?1",
-            params![id],
-            |row| row.get(0),
-        )?;
-
-        if exists {
-            conn.execute(
-            "UPDATE tarifs SET nom = ?1, duree_minutes = ?2, prix_centimes = ?3, updated_at = ?4 WHERE id = ?5",
-            params![nom, duree_minutes, prix_centimes, now, id],
-        )?;
-        } else {
-            conn.execute(
-            "INSERT INTO tarifs (id, nom, duree_minutes, prix_centimes, actif, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5)",
-            params![id, nom, duree_minutes, prix_centimes, now],
-        )?;
-        }
-
-        tarifs_get(conn, &id)
-    }
-
-    fn tarifs_get(conn: &Connection, id: &str) -> Result<Tarif, AppError> {
-        let mut stmt = conn.prepare(
-        "SELECT id, nom, duree_minutes, prix_centimes, actif, created_at, updated_at FROM tarifs WHERE id = ?1",
-    )?;
-        let tarif = stmt.query_row(params![id], row_to_tarif)?;
-        Ok(tarif)
-    }
-
-    pub fn tarifs_list(conn: &Connection) -> Result<Vec<Tarif>, AppError> {
-        ensure_migrated(conn)?;
-        let mut stmt = conn.prepare(
-        "SELECT id, nom, duree_minutes, prix_centimes, actif, created_at, updated_at FROM tarifs ORDER BY nom",
-    )?;
-        let tarifs = stmt
-            .query_map([], row_to_tarif)?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(tarifs)
-    }
-
-    pub fn tarifs_set_actif(conn: &Connection, id: &str, actif: bool) -> Result<Tarif, AppError> {
-        ensure_migrated(conn)?;
-        let now = now_iso();
-        let actif_int = i64::from(actif);
-        let updated = conn.execute(
-            "UPDATE tarifs SET actif = ?1, updated_at = ?2 WHERE id = ?3",
-            params![actif_int, now, id],
-        )?;
-        if updated == 0 {
-            return Err(AppError::new("tarif introuvable"));
-        }
-        tarifs_get(conn, id)
-    }
-
-    pub fn notes_upsert(
-        conn: &Connection,
-        id: Option<&str>,
-        client_id: Option<&str>,
-        corps: &str,
-    ) -> Result<Note, AppError> {
-        ensure_migrated(conn)?;
-        let now = now_iso();
-        let id = match id {
-            Some(existing) => existing.to_string(),
-            None => Uuid::new_v4().to_string(),
-        };
-
-        let exists: bool = conn.query_row(
-            "SELECT COUNT(*) FROM notes WHERE id = ?1",
-            params![id],
-            |row| row.get(0),
-        )?;
-
-        if exists {
-            conn.execute(
-                "UPDATE notes SET client_id = ?1, corps = ?2, updated_at = ?3 WHERE id = ?4",
-                params![client_id, corps, now, id],
-            )?;
-        } else {
-            conn.execute(
-            "INSERT INTO notes (id, client_id, corps, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
-            params![id, client_id, corps, now],
-        )?;
-        }
-
-        notes_get(conn, &id)
-    }
-
-    fn notes_get(conn: &Connection, id: &str) -> Result<Note, AppError> {
-        let mut stmt = conn.prepare(
-            "SELECT id, client_id, corps, created_at, updated_at FROM notes WHERE id = ?1",
-        )?;
-        let note = stmt.query_row(params![id], row_to_note)?;
-        Ok(note)
-    }
-
-    pub fn notes_list(
-        conn: &Connection,
-        client_id: Option<String>,
-        perso: bool,
-    ) -> Result<Vec<Note>, AppError> {
-        ensure_migrated(conn)?;
-        if perso {
-            let mut stmt = conn.prepare(
-            "SELECT id, client_id, corps, created_at, updated_at FROM notes WHERE client_id IS NULL ORDER BY updated_at DESC",
-        )?;
-            return stmt
-                .query_map([], row_to_note)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(AppError::from);
-        }
-        if let Some(client_id) = client_id {
-            let mut stmt = conn.prepare(
-            "SELECT id, client_id, corps, created_at, updated_at FROM notes WHERE client_id = ?1 ORDER BY updated_at DESC",
-        )?;
-            return stmt
-                .query_map(params![client_id], row_to_note)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(AppError::from);
-        }
-        let mut stmt = conn.prepare(
-        "SELECT id, client_id, corps, created_at, updated_at FROM notes ORDER BY updated_at DESC",
-    )?;
-        let notes = stmt
-            .query_map([], row_to_note)?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(notes)
-    }
-
-    pub fn notes_delete(conn: &Connection, id: &str) -> Result<(), AppError> {
-        ensure_migrated(conn)?;
-        let deleted = conn.execute("DELETE FROM notes WHERE id = ?1", params![id])?;
-        if deleted == 0 {
-            return Err(AppError::new("note introuvable"));
-        }
-        Ok(())
-    }
-
-    pub fn rdv_create(
-        conn: &Connection,
-        client_id: &str,
-        tarif_id: Option<String>,
-        debut: &str,
-        duree_minutes: i64,
-        note: Option<String>,
-    ) -> Result<Rdv, AppError> {
-        ensure_migrated(conn)?;
-        if duree_minutes <= 0 {
-            return Err(AppError::new("duree_minutes doit etre positif"));
-        }
-
-        let mut stmt =
-            conn.prepare("SELECT debut, duree_minutes FROM rdv WHERE statut = 'planifie'")?;
-        let existing = stmt
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-
-        for (existing_debut, existing_duree) in existing {
-            if overlaps(debut, duree_minutes, &existing_debut, existing_duree)? {
-                return Err(AppError::new("chevauchement horaire"));
-            }
-        }
-
-        let id = Uuid::new_v4().to_string();
-        let url = jitsi_url(&id);
-        let now = now_iso();
-        conn.execute(
-        "INSERT INTO rdv (id, client_id, tarif_id, debut, duree_minutes, jitsi_url, stripe_url, stripe_id, note, statut, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL, ?7, 'planifie', ?8, ?8)",
-        params![id, client_id, tarif_id, debut, duree_minutes, url, note, now],
-    )?;
-
-        fetch_rdv(conn, &id)
-    }
-
-    pub fn rdv_update(
-        conn: &Connection,
-        id: &str,
-        client_id: &str,
-        tarif_id: Option<String>,
-        debut: &str,
-        duree_minutes: i64,
-        note: Option<String>,
-    ) -> Result<Rdv, AppError> {
-        ensure_migrated(conn)?;
-        if duree_minutes <= 0 {
-            return Err(AppError::new("duree_minutes doit etre positif"));
-        }
-
-        let existing = fetch_rdv(conn, id)?;
-        if existing.statut != "planifie" {
-            return Err(AppError::new("rdv non modifiable"));
-        }
-
-        let mut stmt = conn.prepare(
-            "SELECT id, debut, duree_minutes FROM rdv WHERE statut = 'planifie' AND id != ?1",
-        )?;
-        let others = stmt
-            .query_map(params![id], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, i64>(2)?,
-                ))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-
-        for (_, other_debut, other_duree) in others {
-            if overlaps(debut, duree_minutes, &other_debut, other_duree)? {
-                return Err(AppError::new("chevauchement horaire"));
-            }
-        }
-
-        let now = now_iso();
-        conn.execute(
-        "UPDATE rdv SET client_id = ?1, tarif_id = ?2, debut = ?3, duree_minutes = ?4, note = ?5, updated_at = ?6 WHERE id = ?7",
-        params![client_id, tarif_id, debut, duree_minutes, note, now, id],
-    )?;
-
-        fetch_rdv(conn, id)
-    }
-
-    fn fetch_rappels(conn: &Connection, rdv_id: &str) -> Result<Vec<RappelNtfy>, AppError> {
-        let mut stmt = conn.prepare(
-        "SELECT id, rdv_id, type, ntfy_id, echeance, etat FROM rappels_ntfy WHERE rdv_id = ?1 ORDER BY echeance",
-    )?;
-        let rappels = stmt
-            .query_map(params![rdv_id], |row| {
-                Ok(RappelNtfy {
-                    id: row.get(0)?,
-                    rdv_id: row.get(1)?,
-                    r#type: row.get(2)?,
-                    ntfy_id: row.get(3)?,
-                    echeance: row.get(4)?,
-                    etat: row.get(5)?,
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(rappels)
-    }
-
-    pub fn rdv_get(conn: &Connection, id: &str) -> Result<RdvDetail, AppError> {
-        ensure_migrated(conn)?;
-        let rdv = fetch_rdv(conn, id)?;
-        let rappels = fetch_rappels(conn, id)?;
-        Ok(RdvDetail { rdv, rappels })
-    }
-
-    pub fn rdv_annuler(conn: &Connection, id: &str) -> Result<Rdv, AppError> {
-        ensure_migrated(conn)?;
-        let now = now_iso();
-        let updated = conn.execute(
-            "UPDATE rdv SET statut = 'annule', updated_at = ?1 WHERE id = ?2",
-            params![now, id],
-        )?;
-        if updated == 0 {
-            return Err(AppError::new("rdv introuvable"));
-        }
-        fetch_rdv(conn, id)
-    }
-
-    pub fn rdv_list(
-        conn: &Connection,
-        from: Option<&str>,
-        to: Option<&str>,
-        client_id: Option<&str>,
-    ) -> Result<Vec<Rdv>, AppError> {
-        ensure_migrated(conn)?;
-        if let Some(cid) = client_id {
-            let sql = format!("{RDV_SELECT} WHERE rdv.client_id = ?1 ORDER BY rdv.debut");
-            let mut stmt = conn.prepare(&sql)?;
-            let rdvs = stmt
-                .query_map(params![cid], row_to_rdv)?
-                .collect::<Result<Vec<_>, _>>()?;
-            return Ok(rdvs);
-        }
-
-        let from = from.ok_or_else(|| AppError::new("from requis"))?;
-        let to = to.ok_or_else(|| AppError::new("to requis"))?;
-        let sql = format!(
-        "{RDV_SELECT} WHERE rdv.debut >= ?1 AND rdv.debut < ?2 AND rdv.statut = 'planifie' ORDER BY rdv.debut"
-    );
-        let mut stmt = conn.prepare(&sql)?;
-        let rdvs = stmt
-            .query_map(params![from, to], row_to_rdv)?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(rdvs)
-    }
-
-    pub fn rdv_dashboard(conn: &Connection, now: DateTime<Utc>) -> Result<Dashboard, AppError> {
-        ensure_migrated(conn)?;
-        let (day_start, day_end) = local_day_bounds(now);
-        let aujourdhui = rdv_list(
-            conn,
-            Some(&day_start.to_rfc3339()),
-            Some(&day_end.to_rfc3339()),
-            None,
-        )?;
-
-        let sql = format!(
-        "{RDV_SELECT} WHERE rdv.debut >= ?1 AND rdv.statut = 'planifie' ORDER BY rdv.debut LIMIT 5"
-    );
-        let mut stmt = conn.prepare(&sql)?;
-        let a_venir = stmt
-            .query_map(params![day_end.to_rfc3339()], row_to_rdv)?
-            .collect::<Result<Vec<_>, _>>()?;
-
-        Ok(Dashboard {
-            aujourdhui,
-            a_venir,
-        })
     }
 }
 
 pub fn settings_apply(input: &SettingsSetInput, current: &Settings) -> Settings {
+    let token = if input.ntfy_token_clear {
+        String::new()
+    } else if input.ntfy_token.is_empty() {
+        current.ntfy.token.clone()
+    } else {
+        input.ntfy_token.clone()
+    };
+    let secret_key = if input.stripe_secret_clear {
+        String::new()
+    } else if input.stripe_secret_key.is_empty() {
+        current.stripe.secret_key.clone()
+    } else {
+        input.stripe_secret_key.clone()
+    };
     Settings {
         ntfy: crate::settings::NtfySettings {
             serveur: input.ntfy_serveur.clone(),
             topic: input.ntfy_topic.clone(),
-            token: if input.ntfy_token.is_empty() {
-                current.ntfy.token.clone()
-            } else {
-                input.ntfy_token.clone()
-            },
+            token,
             rappel_24h: input.rappel_24h,
             rappel_1h: input.rappel_1h,
         },
-        stripe: crate::settings::StripeSettings {
-            secret_key: if input.stripe_secret_key.is_empty() {
-                current.stripe.secret_key.clone()
-            } else {
-                input.stripe_secret_key.clone()
-            },
-        },
+        stripe: crate::settings::StripeSettings { secret_key },
     }
 }
 
@@ -946,8 +437,17 @@ pub fn clients_get(id: String) -> Result<Client, String> {
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn clients_delete(id: String) -> Result<(), String> {
-    with_db(|conn| repo::clients_delete(conn, &id)).map_err(|e| e.message)
+pub async fn clients_delete(id: String) -> Result<(), String> {
+    let settings = load_settings();
+    let ntfy_ids =
+        with_db(|conn| repo::clients_rappels_ntfy_ids(conn, &id)).map_err(|e| e.message)?;
+    with_db(|conn| repo::clients_delete(conn, &id)).map_err(|e| e.message)?;
+    for ntfy_id in ntfy_ids {
+        if let Err(e) = ntfy_delete(&settings, &ntfy_id).await {
+            eprintln!("ntfy delete client: {}", e.message);
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1066,29 +566,12 @@ pub async fn rdv_create(
     })
     .map_err(|e| e.message)?;
 
-    let tarif_data =
-        with_db(|conn| stripe_tarif_data(conn, &rdv, &settings)).map_err(|e| e.message)?;
-
     let mut warnings = Vec::new();
-    let rdv = if let Some(data) = tarif_data {
-        match stripe_create_payment_link(&settings.stripe.secret_key, &data.nom, data.prix_centimes)
-            .await
-        {
-            Ok((stripe_id, stripe_url)) => {
-                with_db(|conn| save_stripe_link(conn, &rdv.id, &stripe_id, &stripe_url))
-                    .map_err(|e| e.message)?
-            }
-            Err(e) => {
-                eprintln!("stripe: {}", e.message);
-                warnings.push(e.message);
-                rdv
-            }
-        }
-    } else {
-        rdv
-    };
-
-    warnings.extend(ntfy_schedule_rdv(&settings, &rdv, now).await);
+    let (rdv, stripe_warnings) = ensure_stripe_on_rdv(&settings, rdv, false)
+        .await
+        .map_err(|e| e.message)?;
+    warnings.extend(stripe_warnings);
+    warnings.extend(ntfy_schedule_rdv(&settings, &rdv.id, now).await);
 
     Ok(RdvCreateResult { rdv, warnings })
 }
@@ -1106,7 +589,14 @@ pub async fn rdv_update(
     let now = Utc::now();
 
     let existing = with_db(|conn| repo::rdv_get(conn, &id)).map_err(|e| e.message)?;
-    let debut_changed = existing.rdv.debut != debut;
+    let debut_changed = match (
+        repo::parse_debut_utc(&existing.rdv.debut),
+        repo::parse_debut_utc(&debut),
+    ) {
+        (Ok(a), Ok(b)) => a != b,
+        _ => existing.rdv.debut != debut,
+    };
+    let tarif_changed = existing.rdv.tarif_id != tarif_id;
 
     let rdv = with_db(|conn| {
         repo::rdv_update(
@@ -1122,9 +612,13 @@ pub async fn rdv_update(
     .map_err(|e| e.message)?;
 
     let mut warnings = Vec::new();
+    let (rdv, stripe_warnings) = ensure_stripe_on_rdv(&settings, rdv, tarif_changed)
+        .await
+        .map_err(|e| e.message)?;
+    warnings.extend(stripe_warnings);
     if debut_changed {
         warnings.extend(cancel_rappels_ntfy(&settings, &id).await);
-        warnings.extend(ntfy_schedule_rdv(&settings, &rdv, now).await);
+        warnings.extend(ntfy_schedule_rdv(&settings, &rdv.id, now).await);
     }
 
     Ok(RdvCreateResult { rdv, warnings })
@@ -1133,9 +627,14 @@ pub async fn rdv_update(
 #[tauri::command(rename_all = "snake_case")]
 pub async fn rdv_annuler(id: String) -> Result<RdvCreateResult, String> {
     let settings = load_settings();
-    let warnings = cancel_rappels_ntfy(&settings, &id).await;
     let rdv = with_db(|conn| repo::rdv_annuler(conn, &id)).map_err(|e| e.message)?;
+    let warnings = cancel_rappels_ntfy(&settings, &id).await;
     Ok(RdvCreateResult { rdv, warnings })
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn rdv_set_note(id: String, note: Option<String>) -> Result<Rdv, String> {
+    with_db(|conn| repo::rdv_set_note(conn, &id, note)).map_err(|e| e.message)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1147,20 +646,12 @@ pub fn rdv_dashboard() -> Result<Dashboard, String> {
 pub async fn stripe_ensure_link(rdv_id: String) -> Result<Rdv, String> {
     let settings = load_settings();
     let rdv = with_db(|conn| fetch_rdv(conn, &rdv_id)).map_err(|e| e.message)?;
-    if rdv.stripe_url.is_some() {
-        return Ok(rdv);
-    }
-    let tarif_data =
-        with_db(|conn| stripe_tarif_data(conn, &rdv, &settings)).map_err(|e| e.message)?;
-    if let Some(data) = tarif_data {
-        match stripe_create_payment_link(&settings.stripe.secret_key, &data.nom, data.prix_centimes)
-            .await
-        {
-            Ok((stripe_id, stripe_url)) => {
-                return with_db(|conn| save_stripe_link(conn, &rdv.id, &stripe_id, &stripe_url))
-                    .map_err(|e| e.message);
-            }
-            Err(e) => return Err(e.message),
+    let (rdv, warnings) = ensure_stripe_on_rdv(&settings, rdv, true)
+        .await
+        .map_err(|e| e.message)?;
+    if rdv.stripe_url.is_none() {
+        if let Some(msg) = warnings.first() {
+            return Err(msg.clone());
         }
     }
     Ok(rdv)
@@ -1178,34 +669,23 @@ pub fn run_ntfy_sync() {
     tauri::async_runtime::spawn(async {
         let settings = load_settings();
         let now = Utc::now();
-        let rdvs = match with_db(|conn| {
-            ensure_migrated(conn)?;
-            let sql = format!("{RDV_SELECT} WHERE rdv.statut = 'planifie'");
-            let mut stmt = conn.prepare(&sql)?;
-            let rdvs = stmt
-                .query_map([], row_to_rdv)?
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(rdvs)
-        }) {
-            Ok(rdvs) => rdvs,
+        let jobs = match with_db(|conn| ntfy_collect_pending(conn, &settings, now, None)) {
+            Ok(j) => j,
             Err(e) => {
                 eprintln!("ntfy_sync: {}", e.message);
                 return;
             }
         };
-
-        for rdv in rdvs {
-            for w in ntfy_schedule_rdv(&settings, &rdv, now).await {
-                eprintln!("ntfy_sync: {}", w);
-            }
+        for w in ntfy_run_pending_jobs(&settings, jobs).await {
+            eprintln!("ntfy_sync: {}", w);
         }
     });
 }
 
 #[cfg(test)]
 mod tests {
-    use super::repo::*;
-    use super::{ntfy_sync, settings_apply, SettingsSetInput};
+    use super::{insert_rappel, mark_rappels_annule, ntfy_sync, settings_apply, SettingsSetInput};
+    use crate::repo::*;
     use crate::db::migrate;
     use crate::error::AppError;
     use crate::models::{Client, ClientWrite, Tarif};
@@ -1393,11 +873,11 @@ mod tests {
         let client = seed_client(&conn);
         let rdv = rdv_create(&conn, &client.id, None, "2026-09-12T10:00:00Z", 60, None).unwrap();
         let echeance1 = Utc.with_ymd_and_hms(2026, 9, 12, 9, 0, 0).unwrap();
-        super::insert_rappel(&conn, &rdv.id, RappelKind::H1, "ntfy-1", echeance1).unwrap();
-        super::mark_rappels_annule(&conn, &rdv.id).unwrap();
+        insert_rappel(&conn, &rdv.id, RappelKind::H1, "ntfy-1", echeance1).unwrap();
+        mark_rappels_annule(&conn, &rdv.id).unwrap();
 
         let echeance2 = Utc.with_ymd_and_hms(2026, 9, 12, 8, 0, 0).unwrap();
-        super::insert_rappel(&conn, &rdv.id, RappelKind::H1, "ntfy-2", echeance2).unwrap();
+        insert_rappel(&conn, &rdv.id, RappelKind::H1, "ntfy-2", echeance2).unwrap();
 
         let count: i64 = conn
             .query_row(
@@ -1591,9 +1071,11 @@ mod tests {
             ntfy_serveur: "https://ntfy.sh".to_string(),
             ntfy_topic: "new-topic".to_string(),
             ntfy_token: String::new(),
+            ntfy_token_clear: false,
             rappel_24h: false,
             rappel_1h: true,
             stripe_secret_key: String::new(),
+            stripe_secret_clear: false,
         };
         let updated = settings_apply(&input, &current);
         assert_eq!(updated.ntfy.token, "tok_secret");
@@ -1740,5 +1222,100 @@ mod tests {
         migrate(&conn).unwrap();
         let err = clients_delete(&conn, "missing").unwrap_err();
         assert_eq!(err.message, "client introuvable");
+    }
+
+    #[test]
+    fn settings_clear_efface_secrets() {
+        let current = Settings {
+            ntfy: crate::settings::NtfySettings {
+                serveur: "https://ntfy.sh".to_string(),
+                topic: "t".to_string(),
+                token: "tok_secret".to_string(),
+                rappel_24h: true,
+                rappel_1h: true,
+            },
+            stripe: crate::settings::StripeSettings {
+                secret_key: "sk_test_secret".to_string(),
+            },
+        };
+        let input = SettingsSetInput {
+            ntfy_serveur: current.ntfy.serveur.clone(),
+            ntfy_topic: current.ntfy.topic.clone(),
+            ntfy_token: String::new(),
+            ntfy_token_clear: true,
+            rappel_24h: true,
+            rappel_1h: true,
+            stripe_secret_key: String::new(),
+            stripe_secret_clear: true,
+        };
+        let updated = settings_apply(&input, &current);
+        assert!(updated.ntfy.token.is_empty());
+        assert!(updated.stripe.secret_key.is_empty());
+    }
+
+    #[test]
+    fn rdv_set_note_maj_uniquement_note() {
+        let conn = crate::db::open_memory().unwrap();
+        let client = seed_client(&conn);
+        let rdv = rdv_create(&conn, &client.id, None, "2026-09-11T10:00:00Z", 60, None).unwrap();
+        let updated = rdv_set_note(&conn, &rdv.id, Some("note test".into())).unwrap();
+        assert_eq!(updated.note.as_deref(), Some("note test"));
+        rdv_annuler(&conn, &rdv.id).unwrap();
+        let err = rdv_set_note(&conn, &rdv.id, Some("x".into())).unwrap_err();
+        assert!(err.message.contains("annulé"));
+    }
+
+    #[test]
+    fn rdv_create_refuse_debut_invalide() {
+        let conn = crate::db::open_memory().unwrap();
+        let client = seed_client(&conn);
+        let err =
+            rdv_create(&conn, &client.id, None, "pas-une-date", 60, None).unwrap_err();
+        assert!(err.message.contains("valide"));
+    }
+
+    #[test]
+    fn rdv_update_tarif_change_efface_stripe() {
+        let conn = crate::db::open_memory().unwrap();
+        let client = seed_client(&conn);
+        let t1 = tarifs_upsert(&conn, None, "A", 60, 5000).unwrap();
+        let t2 = tarifs_upsert(&conn, None, "B", 60, 6000).unwrap();
+        let rdv = rdv_create(
+            &conn,
+            &client.id,
+            Some(t1.id.clone()),
+            "2026-09-11T10:00:00Z",
+            60,
+            None,
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE rdv SET stripe_url = 'https://stripe.test', stripe_id = 'pl_test' WHERE id = ?1",
+            params![rdv.id],
+        )
+        .unwrap();
+        let updated = rdv_update(
+            &conn,
+            &rdv.id,
+            &client.id,
+            Some(t2.id.clone()),
+            "2026-09-11T10:00:00Z",
+            60,
+            None,
+        )
+        .unwrap();
+        assert_eq!(updated.tarif_id.as_deref(), Some(t2.id.as_str()));
+        assert!(updated.stripe_url.is_none());
+        assert!(updated.stripe_id.is_none());
+    }
+
+    #[test]
+    fn rdv_dashboard_formats_debut_mixtes() {
+        let conn = crate::db::open_memory().unwrap();
+        let client = seed_client(&conn);
+        rdv_create(&conn, &client.id, None, "2026-09-11T10:00:00.000Z", 60, None).unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 9, 11, 8, 0, 0).unwrap();
+        let dash = rdv_dashboard(&conn, now).unwrap();
+        assert_eq!(dash.aujourdhui.len(), 1);
     }
 }

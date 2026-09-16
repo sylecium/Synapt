@@ -84,7 +84,9 @@ export type SettingsSetInput = {
 	ntfy_serveur: string;
 	ntfy_topic: string;
 	ntfy_token: string;
+	ntfy_token_clear: boolean;
 	rappel_24h: boolean;
 	rappel_1h: boolean;
 	stripe_secret_key: string;
+	stripe_secret_clear: boolean;
 };

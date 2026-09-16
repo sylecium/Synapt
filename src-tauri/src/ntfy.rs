@@ -75,14 +75,6 @@ impl ReqwestNtfy {
     }
 }
 
-pub struct BlockingReqwestNtfy(pub ReqwestNtfy);
-
-impl NtfyClient for BlockingReqwestNtfy {
-    fn publish(&self, delay: DateTime<Utc>, _kind: RappelKind) -> Result<String, AppError> {
-        self.0.publish_blocking(delay)
-    }
-}
-
 pub const NTFY_MAX: Duration = Duration::days(3);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

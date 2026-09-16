@@ -95,6 +95,9 @@ export const rdvUpdate = (p: {
 
 export const rdvAnnuler = (id: string) => invoke<RdvCreateResult>('rdv_annuler', { id });
 
+export const rdvSetNote = (id: string, note: string | null) =>
+	invoke<Rdv>('rdv_set_note', { id, note });
+
 export const rdvDashboard = () => invoke<Dashboard>('rdv_dashboard');
 
 export const stripeEnsureLink = (rdv_id: string) =>

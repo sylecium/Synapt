@@ -53,32 +53,109 @@
 		return sameLocalDay(day, new Date());
 	}
 
-	function rdvsForDay(day: Date): Rdv[] {
-		return rdvs.filter((r) => sameLocalDay(new Date(r.debut), day));
+	type DaySeg = { rdv: Rdv; startMins: number; endMins: number };
+
+	function dayBounds(day: Date): { start: Date; end: Date } {
+		const start = new Date(day);
+		start.setHours(0, 0, 0, 0);
+		const end = new Date(start);
+		end.setDate(end.getDate() + 1);
+		return { start, end };
 	}
 
-	function rdvInGrid(rdv: Rdv): boolean {
-		const start = new Date(rdv.debut);
-		const startMins = start.getHours() * 60 + start.getMinutes();
-		const endMins = startMins + rdv.duree_minutes;
-		const visStart = Math.max(startMins, GRID_START);
-		const visEnd = Math.min(endMins, GRID_END);
-		return visEnd > visStart;
+	function rdvEnd(rdv: Rdv): Date {
+		return new Date(new Date(rdv.debut).getTime() + rdv.duree_minutes * 60_000);
+	}
+
+	function segmentOnDay(rdv: Rdv, day: Date): DaySeg | null {
+		const rStart = new Date(rdv.debut);
+		const rEnd = rdvEnd(rdv);
+		const { start: dStart, end: dEnd } = dayBounds(day);
+		const segStart = rStart > dStart ? rStart : dStart;
+		const segEnd = rEnd < dEnd ? rEnd : dEnd;
+		if (segEnd <= segStart) return null;
+		const startMins = (segStart.getTime() - dStart.getTime()) / 60_000;
+		const endMins = (segEnd.getTime() - dStart.getTime()) / 60_000;
+		return { rdv, startMins, endMins };
+	}
+
+	function segsForDay(day: Date): DaySeg[] {
+		const out: DaySeg[] = [];
+		for (const r of rdvs) {
+			const seg = segmentOnDay(r, day);
+			if (seg) out.push(seg);
+		}
+		return out;
+	}
+
+	function clipToGrid(seg: DaySeg): { visStart: number; visEnd: number } | null {
+		const visStart = Math.max(seg.startMins, GRID_START);
+		const visEnd = Math.min(seg.endMins, GRID_END);
+		if (visEnd <= visStart) return null;
+		return { visStart, visEnd };
 	}
 
 	function rdvsOutsideForDay(day: Date): Rdv[] {
-		return rdvsForDay(day).filter((r) => !rdvInGrid(r));
+		return segsForDay(day)
+			.filter((seg) => !clipToGrid(seg))
+			.map((seg) => seg.rdv);
 	}
 
-	function rdvStyle(rdv: Rdv): string {
-		const start = new Date(rdv.debut);
-		const startMins = start.getHours() * 60 + start.getMinutes();
-		const endMins = startMins + rdv.duree_minutes;
-		const visStart = Math.max(startMins, GRID_START);
-		const visEnd = Math.min(endMins, GRID_END);
-		const top = ((visStart - GRID_START) / GRID_TOTAL) * 100;
-		const height = ((visEnd - visStart) / GRID_TOTAL) * 100;
-		return `top:${top}%;height:${height}%`;
+	function layoutInGrid(day: Date): {
+		rdv: Rdv;
+		labelMins: number;
+		style: string;
+	}[] {
+		const items = segsForDay(day)
+			.map((seg) => {
+				const clip = clipToGrid(seg);
+				if (!clip) return null;
+				return { rdv: seg.rdv, ...clip };
+			})
+			.filter((x): x is { rdv: Rdv; visStart: number; visEnd: number } => x !== null)
+			.sort((a, b) => a.visStart - b.visStart || a.visEnd - b.visEnd);
+
+		const clusters: (typeof items)[] = [];
+		let cluster: typeof items = [];
+		let clusterEnd = -1;
+		for (const it of items) {
+			if (cluster.length && it.visStart >= clusterEnd) {
+				clusters.push(cluster);
+				cluster = [];
+				clusterEnd = -1;
+			}
+			cluster.push(it);
+			clusterEnd = Math.max(clusterEnd, it.visEnd);
+		}
+		if (cluster.length) clusters.push(cluster);
+
+		const placed: { rdv: Rdv; labelMins: number; style: string }[] = [];
+		for (const c of clusters) {
+			const colEnd: number[] = [];
+			const withCol = c.map((it) => {
+				let col = colEnd.findIndex((end) => end <= it.visStart);
+				if (col === -1) {
+					col = colEnd.length;
+					colEnd.push(it.visEnd);
+				} else {
+					colEnd[col] = it.visEnd;
+				}
+				return { ...it, col };
+			});
+			const colCount = colEnd.length;
+			for (const it of withCol) {
+				const top = ((it.visStart - GRID_START) / GRID_TOTAL) * 100;
+				const height = ((it.visEnd - it.visStart) / GRID_TOTAL) * 100;
+				const width = 100 / colCount;
+				const left = it.col * width;
+				placed.push({
+					rdv: it.rdv,
+					labelMins: it.visStart,
+					style: `top:${top}%;height:${height}%;left:calc(${left}% + 2px);width:calc(${width}% - 4px)`
+				});
+			}
+		}
+		return placed;
 	}
 
 	function dayLabel(d: Date): string {
@@ -155,21 +232,21 @@
 								</div>
 							</div>
 						{/if}
-						{#each rdvsForDay(day).filter(rdvInGrid) as rdv (rdv.id)}
-							<RdvContextMenu {rdv} onOpen={() => onRdv(rdv)} {onUpdated}>
+						{#each layoutInGrid(day) as block (`${block.rdv.id}:${day.toISOString()}`)}
+							<RdvContextMenu rdv={block.rdv} onOpen={() => onRdv(block.rdv)} {onUpdated}>
 								{#snippet children(props)}
 									<button
 										{...props}
 										type="button"
-										class="bg-primary text-primary-foreground absolute inset-x-0.5 z-10 overflow-hidden rounded-md px-1 py-0.5 text-left text-xs hover:opacity-90"
-										style={rdvStyle(rdv)}
+										class="bg-primary text-primary-foreground absolute z-10 overflow-hidden rounded-md px-1 py-0.5 text-left text-xs hover:opacity-90"
+										style={block.style}
 										onclick={(e) => {
 											e.stopPropagation();
-											onRdv(rdv);
+											onRdv(block.rdv);
 										}}
 									>
-										<span class="font-medium">{rdv.client_nom}</span>
-										<span class="font-mono tabular-nums opacity-80">{formatTime(rdv.debut)}</span>
+										<span class="font-medium">{block.rdv.client_nom}</span>
+										<span class="font-mono tabular-nums opacity-80">{timeLabel(Math.floor(block.labelMins / 60), block.labelMins % 60)}</span>
 									</button>
 								{/snippet}
 							</RdvContextMenu>

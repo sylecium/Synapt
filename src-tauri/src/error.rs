@@ -16,7 +16,12 @@ impl AppError {
 
 impl From<rusqlite::Error> for AppError {
     fn from(err: rusqlite::Error) -> Self {
-        Self::new(err.to_string())
+        let raw = err.to_string();
+        let lower = raw.to_lowercase();
+        if lower.contains("locked") || lower.contains("busy") {
+            return Self::new("La base est occupée. Réessayez.");
+        }
+        Self::new(raw)
     }
 }
 

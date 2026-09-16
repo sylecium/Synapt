@@ -18,6 +18,8 @@
 	let rappel24h = $state(true);
 	let rappel1h = $state(true);
 	let stripeSecretKey = $state('');
+	let ntfyTokenClear = $state(false);
+	let stripeSecretClear = $state(false);
 	let saving = $state(false);
 	let testing = $state(false);
 
@@ -40,13 +42,17 @@
 				ntfy_serveur: ntfyServeur,
 				ntfy_topic: ntfyTopic,
 				ntfy_token: ntfyToken,
+				ntfy_token_clear: ntfyTokenClear,
 				rappel_24h: rappel24h,
 				rappel_1h: rappel1h,
-				stripe_secret_key: stripeSecretKey
+				stripe_secret_key: stripeSecretKey,
+				stripe_secret_clear: stripeSecretClear
 			});
 			loaded = await settingsGet();
 			ntfyToken = '';
 			stripeSecretKey = '';
+			ntfyTokenClear = false;
+			stripeSecretClear = false;
 			toast.success('Réglages enregistrés');
 		} catch (e) {
 			toast.error(userMessage(e));
@@ -96,6 +102,12 @@
 					placeholder={secretPlaceholder(loaded.ntfy_token_configured, loaded.ntfy_token_last4)}
 				/>
 				<p class="text-muted-foreground text-xs">Optionnel, si le serveur ntfy l’exige.</p>
+				{#if loaded.ntfy_token_configured}
+					<label class="flex items-center gap-2 text-sm">
+						<input type="checkbox" bind:checked={ntfyTokenClear} />
+						Effacer le token enregistré
+					</label>
+				{/if}
 			</div>
 			<div class="flex items-center gap-2">
 				<Switch id="rappel-24h" bind:checked={rappel24h} />
@@ -121,6 +133,12 @@
 				<p class="text-muted-foreground text-xs">
 					Collez une clé secrète sk_…. Elle reste sur cette machine.
 				</p>
+				{#if loaded.stripe_configured}
+					<label class="flex items-center gap-2 text-sm">
+						<input type="checkbox" bind:checked={stripeSecretClear} />
+						Effacer la clé enregistrée
+					</label>
+				{/if}
 			</div>
 		</section>
 

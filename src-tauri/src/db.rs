@@ -62,15 +62,24 @@ CREATE TABLE IF NOT EXISTS rappels_ntfy (
 );
 ";
 
+fn configure_connection(conn: &Connection) -> Result<(), AppError> {
+    conn.busy_timeout(std::time::Duration::from_millis(5000))?;
+    Ok(())
+}
+
 pub fn open_memory() -> Result<Connection, AppError> {
-    Connection::open_in_memory().map_err(AppError::from)
+    let conn = Connection::open_in_memory().map_err(AppError::from)?;
+    configure_connection(&conn)?;
+    Ok(conn)
 }
 
 pub fn open_file(path: &Path) -> Result<Connection, AppError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    Connection::open(path).map_err(AppError::from)
+    let conn = Connection::open(path).map_err(AppError::from)?;
+    configure_connection(&conn)?;
+    Ok(conn)
 }
 
 pub fn db_path() -> Result<PathBuf, AppError> {

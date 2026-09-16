@@ -7,7 +7,13 @@
   ],
   "permissions": [
     "core:default",
-    "opener:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "https://meet.jit.si/*" },
+        { "url": "https://*.stripe.com/*" }
+      ]
+    },
     "clipboard-manager:allow-write-text",
     "updater:default",
     "process:allow-restart"

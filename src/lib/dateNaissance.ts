@@ -1,4 +1,4 @@
-import { CalendarDate, type DateValue } from '@internationalized/date';
+import { CalendarDate } from '@internationalized/date';
 
 function pad(n: number): string {
 	return String(n).padStart(2, '0');
@@ -25,37 +25,4 @@ export function ymdToDdMmYyyy(ymd: string): string {
 	const [y, m, d] = ymd.split('-');
 	if (!y || !m || !d) return '';
 	return `${d}/${m}/${y}`;
-}
-
-export function ymdToDateValue(ymd: string): DateValue | undefined {
-	const [y, m, d] = ymd.split('-').map(Number);
-	if (!y || !m || !d) return undefined;
-	const date = new CalendarDate(y, m, d);
-	if (date.year !== y || date.month !== m || date.day !== d) return undefined;
-	return date;
-}
-
-export function dateValueToYmd(value: DateValue | undefined): string {
-	if (!value) return '';
-	return `${value.year}-${pad(value.month)}-${pad(value.day)}`;
-}
-
-export function daysInMonth(year: number, month: number): number {
-	return new CalendarDate(year, month, 32).day;
-}
-
-export function monthAllowsDay(month: number, day: number): boolean {
-	if (day <= 28) return true;
-	if (day === 29) return true;
-	if (day === 30) return month !== 2;
-	return month === 1 || month === 3 || month === 5 || month === 7 || month === 8 || month === 10 || month === 12;
-}
-
-export function yearAllowsDate(year: number, month: number, day: number): boolean {
-	return daysInMonth(year, month) >= day;
-}
-
-export function todayCalendar(): CalendarDate {
-	const n = new Date();
-	return new CalendarDate(n.getFullYear(), n.getMonth() + 1, n.getDate());
 }
