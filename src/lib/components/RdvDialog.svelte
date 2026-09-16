@@ -9,13 +9,14 @@
 	import { userMessage } from '$lib/errors';
 	import ClientCombobox from '$lib/components/ClientCombobox.svelte';
 	import NoteEditor from '$lib/components/NoteEditor.svelte';
+	import TarifSelect from '$lib/components/TarifSelect.svelte';
+	import { ignoreNestedOverlay } from '$lib/utils';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import * as Calendar from '$lib/components/ui/calendar/index.js';
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import * as Popover from '$lib/components/ui/popover/index.js';
-	import * as Select from '$lib/components/ui/select/index.js';
 
 	type Props = {
 		open: boolean;
@@ -50,13 +51,6 @@
 	let listsLoaded = $state(false);
 	let formReady = $state(false);
 
-	const NONE = 'none';
-	const tarifsActifs = $derived(tarifs.filter((t) => t.actif));
-	const tarifCourant = $derived(tarifs.find((t) => t.id === tarifId));
-	const tarifSelectValue = $derived(tarifId === '' ? NONE : tarifId);
-	const tarifLabel = $derived(
-		tarifId === '' ? 'Sans tarif' : (tarifCourant?.nom ?? 'Sans tarif')
-	);
 	const dateValue = $derived.by((): DateValue | undefined => {
 		const date = debutLocal.split('T')[0];
 		if (!date) return undefined;
@@ -87,13 +81,6 @@
 		const date = debutLocal.split('T')[0];
 		if (!date || !next) return;
 		debutLocal = `${date}T${next}`;
-	}
-
-	function ignoreNestedOverlay(e: { target: EventTarget | null; preventDefault: () => void }) {
-		const el = e.target instanceof Element ? e.target : null;
-		if (el?.closest('[data-slot="popover-content"], [data-slot="select-content"]')) {
-			e.preventDefault();
-		}
 	}
 
 	$effect(() => {
@@ -227,29 +214,14 @@
 			</div>
 			<div class="flex flex-col gap-2">
 				<Label>Tarif</Label>
-				<Select.Root
-					type="single"
-					value={tarifSelectValue}
-					onValueChange={(v) => {
-						tarifId = !v || v === NONE ? '' : v;
+				<TarifSelect
+					{tarifs}
+					value={tarifId}
+					onValueChange={(id) => {
+						tarifId = id;
 						onTarifChange();
 					}}
-				>
-					<Select.Trigger class="w-full">
-						{tarifLabel}
-					</Select.Trigger>
-					<Select.Content>
-						<Select.Item value={NONE} label="Sans tarif">Sans tarif</Select.Item>
-						{#if tarifCourant && !tarifCourant.actif}
-							<Select.Item value={tarifCourant.id} label={tarifCourant.nom}>
-								{tarifCourant.nom} (inactif)
-							</Select.Item>
-						{/if}
-						{#each tarifsActifs as tarif (tarif.id)}
-							<Select.Item value={tarif.id} label={tarif.nom}>{tarif.nom}</Select.Item>
-						{/each}
-					</Select.Content>
-				</Select.Root>
+				/>
 			</div>
 			<div class="flex flex-col gap-2">
 				<Label>Début</Label>

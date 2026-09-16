@@ -12,10 +12,20 @@
 		focusDay?: Date;
 		onSlot: (isoUtc: string) => void;
 		onRdv: (r: Rdv) => void;
+		onEdit?: (r: Rdv) => void;
 		onUpdated?: () => void;
 	};
 
-	let { startMonday, rdvs, dayView = false, focusDay, onSlot, onRdv, onUpdated }: Props = $props();
+	let {
+		startMonday,
+		rdvs,
+		dayView = false,
+		focusDay,
+		onSlot,
+		onRdv,
+		onEdit,
+		onUpdated
+	}: Props = $props();
 
 	let now = $state(new Date());
 
@@ -233,7 +243,12 @@
 							</div>
 						{/if}
 						{#each layoutInGrid(day) as block (`${block.rdv.id}:${day.toISOString()}`)}
-							<RdvContextMenu rdv={block.rdv} onOpen={() => onRdv(block.rdv)} {onUpdated}>
+							<RdvContextMenu
+								rdv={block.rdv}
+								onOpen={() => onRdv(block.rdv)}
+								onEdit={onEdit ? () => onEdit(block.rdv) : undefined}
+								{onUpdated}
+							>
 								{#snippet children(props)}
 									<button
 										{...props}
@@ -256,7 +271,12 @@
 						<div class="flex flex-col gap-1 border-t px-1 py-2">
 							<p class="text-muted-foreground text-[10px] font-medium uppercase">Hors plage</p>
 							{#each rdvsOutsideForDay(day) as rdv (rdv.id)}
-								<RdvContextMenu {rdv} onOpen={() => onRdv(rdv)} {onUpdated}>
+								<RdvContextMenu
+									{rdv}
+									onOpen={() => onRdv(rdv)}
+									onEdit={onEdit ? () => onEdit(rdv) : undefined}
+									{onUpdated}
+								>
 									{#snippet children(props)}
 										<button
 											{...props}

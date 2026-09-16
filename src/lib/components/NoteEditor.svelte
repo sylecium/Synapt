@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, type Snippet } from 'svelte';
+	import { onMount, untrack, type Snippet } from 'svelte';
 	import { Editor } from '@tiptap/core';
 	import StarterKit from '@tiptap/starter-kit';
 	import { TableKit } from '@tiptap/extension-table';
@@ -51,9 +51,15 @@
 		};
 	}
 
+	$effect(() => {
+		void noteId;
+		const html = noteToEditorContent(untrack(() => corps));
+		if (!instance) return;
+		instance.commands.setContent(html, { emitUpdate: false });
+	});
+
 	onMount(() => {
 		if (!host) return;
-		void noteId;
 		const html = noteToEditorContent(corps);
 		const compact = variant === 'compact';
 		const ed = new Editor({

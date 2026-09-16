@@ -33,6 +33,7 @@
 	let presetDebut = $state<string | undefined>();
 	let panelOpen = $state(false);
 	let panelRdvId = $state<string | null>(null);
+	let editRdvId = $state<string | null>(null);
 	let loading = $state(true);
 
 	const navLabel = $derived(
@@ -119,9 +120,16 @@
 		panelOpen = true;
 	}
 
+	function openEditRdv(r: Rdv) {
+		editRdvId = r.id;
+		presetDebut = undefined;
+		rdvDialogOpen = true;
+	}
+
 	function onRdvSaved(_result: RdvCreateResult) {
 		rdvDialogOpen = false;
 		presetDebut = undefined;
+		editRdvId = null;
 		loadRdvs();
 	}
 
@@ -183,6 +191,7 @@
 			focusDay={selectedDay}
 			{onSlot}
 			{onRdv}
+			onEdit={openEditRdv}
 			onUpdated={loadRdvs}
 		/>
 	{/if}
@@ -190,10 +199,12 @@
 
 <RdvDialog
 	open={rdvDialogOpen}
+	rdvId={editRdvId ?? undefined}
 	{presetDebut}
 	onClose={() => {
 		rdvDialogOpen = false;
 		presetDebut = undefined;
+		editRdvId = null;
 	}}
 	onSaved={onRdvSaved}
 />

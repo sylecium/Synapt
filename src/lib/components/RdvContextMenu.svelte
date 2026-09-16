@@ -12,7 +12,6 @@
 		stripeBlockedReason
 	} from '$lib/rdvActions';
 	import type { Rdv, SettingsPublic, Tarif } from '$lib/types';
-	import RdvDialog from '$lib/components/RdvDialog.svelte';
 	import * as ContextMenu from '$lib/components/ui/context-menu/index.js';
 
 	type TriggerProps = Record<string, unknown>;
@@ -21,25 +20,39 @@
 		rdv: Rdv;
 		children: Snippet<[TriggerProps]>;
 		onOpen: () => void;
+		onEdit?: () => void;
 		onUpdated?: () => void;
 		showOpen?: boolean;
+		settings?: SettingsPublic | null;
+		tarifs?: Tarif[];
 	};
 
-	let { rdv, children, onOpen, onUpdated, showOpen = true }: Props = $props();
+	let {
+		rdv,
+		children,
+		onOpen,
+		onEdit,
+		onUpdated,
+		showOpen = true,
+		settings: settingsFromParent,
+		tarifs: tarifsFromParent
+	}: Props = $props();
 
-	let settings = $state<SettingsPublic | null>(null);
-	let tarifs = $state<Tarif[]>([]);
-	let editOpen = $state(false);
+	let settingsLocal = $state<SettingsPublic | null>(null);
+	let tarifsLocal = $state<Tarif[]>([]);
 	let stripeBusy = $state(false);
 	let cancelling = $state(false);
 
+	const settings = $derived(settingsFromParent ?? settingsLocal);
+	const tarifs = $derived(tarifsFromParent ?? tarifsLocal);
 	const cancelled = $derived(rdv.statut === 'annule');
 	const stripeHint = $derived(stripeBlockedReason(rdv, settings, tarifs));
 	const stripeDisabled = $derived(!!stripeHint);
 
 	onMount(async () => {
+		if (settingsFromParent !== undefined) return;
 		try {
-			[settings, tarifs] = await Promise.all([settingsGet(), tarifsList()]);
+			[settingsLocal, tarifsLocal] = await Promise.all([settingsGet(), tarifsList()]);
 		} catch (e) {
 			toast.error(userMessage(e));
 		}
@@ -108,12 +121,7 @@
 			Copier le lien Stripe
 		</ContextMenu.Item>
 		<ContextMenu.Separator />
-		<ContextMenu.Item
-			disabled={cancelled}
-			onSelect={() => {
-				editOpen = true;
-			}}
-		>
+		<ContextMenu.Item disabled={cancelled} onSelect={() => onEdit?.()}>
 			Modifier
 		</ContextMenu.Item>
 		<ContextMenu.Item
@@ -125,13 +133,3 @@
 		</ContextMenu.Item>
 	</ContextMenu.Content>
 </ContextMenu.Root>
-
-<RdvDialog
-	open={editOpen}
-	rdvId={rdv.id}
-	onClose={() => (editOpen = false)}
-	onSaved={() => {
-		editOpen = false;
-		onUpdated?.();
-	}}
-/>

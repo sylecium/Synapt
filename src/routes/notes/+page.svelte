@@ -9,6 +9,7 @@
 	import type { Note } from '$lib/types';
 	import { formatNoteListDate } from '$lib/format';
 	import { notePlainText, notePreview, noteTitle } from '$lib/notesHtml';
+	import { createDebouncedNoteSave } from '$lib/debouncedNoteSave';
 	import NoteEditor from '$lib/components/NoteEditor.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
@@ -19,8 +20,6 @@
 	let selectedId = $state<string | null>(null);
 	let recherche = $state('');
 	let initial = $state(true);
-	let saveTimer: ReturnType<typeof setTimeout> | null = null;
-	let pendingId: string | null = null;
 
 	const selected = $derived(notes.find((n) => n.id === selectedId) ?? null);
 
@@ -30,10 +29,18 @@
 		return notes.filter((n) => notePlainText(n.corps).toLowerCase().includes(q));
 	});
 
+	const noteSave = createDebouncedNoteSave({
+		getNote: (id) => notes.find((n) => n.id === id),
+		save: (note) => notesUpsert({ id: note.id, client_id: null, corps: note.corps }),
+		onSaved: (note) => {
+			notes = [note, ...notes.filter((n) => n.id !== note.id)];
+		},
+		onError: (e) => toast.error(userMessage(e))
+	});
+
 	onMount(load);
 	onDestroy(() => {
-		if (saveTimer) clearTimeout(saveTimer);
-		void flushSave();
+		void noteSave.flush();
 	});
 
 	async function load() {
@@ -47,51 +54,20 @@
 		}
 	}
 
-	async function flushSave() {
-		if (saveTimer) {
-			clearTimeout(saveTimer);
-			saveTimer = null;
-		}
-		const id = pendingId;
-		if (!id) return;
-		const note = notes.find((n) => n.id === id);
-		pendingId = null;
-		if (!note) return;
-		try {
-			const saved = await notesUpsert({
-				id: note.id,
-				client_id: null,
-				corps: note.corps
-			});
-			note.updated_at = saved.updated_at;
-			notes = [note, ...notes.filter((n) => n.id !== note.id)];
-		} catch (e) {
-			toast.error(userMessage(e));
-		}
-	}
-
-	function scheduleSave(note: Note) {
-		pendingId = note.id;
-		if (saveTimer) clearTimeout(saveTimer);
-		saveTimer = setTimeout(() => {
-			void flushSave();
-		}, 400);
-	}
-
 	function onHtml(html: string) {
 		if (!selected) return;
 		selected.corps = html;
-		scheduleSave(selected);
+		noteSave.schedule(selected);
 	}
 
 	async function selectNote(id: string) {
 		if (id === selectedId) return;
-		await flushSave();
+		await noteSave.flush();
 		selectedId = id;
 	}
 
 	async function createNote() {
-		await flushSave();
+		await noteSave.flush();
 		try {
 			const note = await notesUpsert({ client_id: null, corps: '' });
 			notes = [note, ...notes];
@@ -103,11 +79,7 @@
 
 	async function removeNote(id: string) {
 		if (selected?.id === id) {
-			if (saveTimer) {
-				clearTimeout(saveTimer);
-				saveTimer = null;
-			}
-			pendingId = null;
+			noteSave.cancel();
 		}
 		try {
 			await notesDelete(id);

@@ -27,6 +27,7 @@
 	let rdvDialogOpen = $state(false);
 	let panelOpen = $state(false);
 	let panelRdvId = $state<string | null>(null);
+	let editRdvId = $state<string | null>(null);
 	let initial = $state(true);
 	let clientsCount = $state(0);
 	let tarifsCount = $state(0);
@@ -84,8 +85,14 @@
 		panelOpen = true;
 	}
 
+	function openEditRdv(r: Rdv) {
+		editRdvId = r.id;
+		rdvDialogOpen = true;
+	}
+
 	function onRdvSaved(_result: RdvCreateResult) {
 		rdvDialogOpen = false;
+		editRdvId = null;
 		reload();
 	}
 
@@ -172,7 +179,12 @@
 		{#if prochain}
 			<section class="flex flex-col gap-2">
 				<h2 class="text-xs font-medium tracking-wide text-muted-foreground uppercase">Prochain</h2>
-				<RdvContextMenu rdv={prochain} onOpen={() => openPanel(prochain)} onUpdated={reload}>
+				<RdvContextMenu
+					rdv={prochain}
+					onOpen={() => openPanel(prochain)}
+					onEdit={() => openEditRdv(prochain)}
+					onUpdated={reload}
+				>
 					{#snippet children(props)}
 						<div {...props} class="flex items-center gap-3 rounded-lg border px-4 py-3">
 							<button
@@ -213,7 +225,12 @@
 				<ul class="divide-y rounded-lg border">
 					{#each dashboard.aujourdhui as rdv (rdv.id)}
 						<li>
-							<RdvContextMenu {rdv} onOpen={() => openPanel(rdv)} onUpdated={reload}>
+							<RdvContextMenu
+								{rdv}
+								onOpen={() => openPanel(rdv)}
+								onEdit={() => openEditRdv(rdv)}
+								onUpdated={reload}
+							>
 								{#snippet children(props)}
 									<div {...props} class="flex items-center gap-x-4 px-4 py-3">
 										<button
@@ -258,7 +275,12 @@
 				<ul class="divide-y rounded-lg border">
 					{#each dashboard.a_venir as rdv (rdv.id)}
 						<li>
-							<RdvContextMenu {rdv} onOpen={() => openPanel(rdv)} onUpdated={reload}>
+							<RdvContextMenu
+								{rdv}
+								onOpen={() => openPanel(rdv)}
+								onEdit={() => openEditRdv(rdv)}
+								onUpdated={reload}
+							>
 								{#snippet children(props)}
 									<button
 										{...props}
@@ -286,7 +308,11 @@
 
 <RdvDialog
 	open={rdvDialogOpen}
-	onClose={() => (rdvDialogOpen = false)}
+	rdvId={editRdvId ?? undefined}
+	onClose={() => {
+		rdvDialogOpen = false;
+		editRdvId = null;
+	}}
 	onSaved={onRdvSaved}
 />
 

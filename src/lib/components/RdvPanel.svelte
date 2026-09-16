@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import CopyIcon from '@lucide/svelte/icons/copy';
 	import VideoIcon from '@lucide/svelte/icons/video';
 	import BanknoteIcon from '@lucide/svelte/icons/banknote';
-	import { rdvGet, rdvUpdate, settingsGet, tarifsList } from '$lib/api';
+	import { rdvGet, rdvSetNote, settingsGet, tarifsList } from '$lib/api';
 	import type { RappelNtfy, Rdv, RdvDetail, SettingsPublic, Tarif } from '$lib/types';
 	import { formatCentimes, formatTime } from '$lib/format';
 	import { noteIsEmpty } from '$lib/notesHtml';
@@ -43,6 +43,7 @@
 	let cancelling = $state(false);
 	let stripeBusy = $state(false);
 	let saveTimer: ReturnType<typeof setTimeout> | null = null;
+	let loadedRdvId = $state<string | null>(null);
 
 	const rdv = $derived(detail?.rdv ?? null);
 	const rappels = $derived(detail?.rappels ?? []);
@@ -57,11 +58,27 @@
 
 	$effect(() => {
 		if (open && rdvId) {
-			loadDetail(rdvId);
+			if (loadedRdvId && loadedRdvId !== rdvId) {
+				void (async () => {
+					await flushNote();
+					loadedRdvId = rdvId;
+					await loadDetail(rdvId);
+				})();
+			} else {
+				loadedRdvId = rdvId;
+				void loadDetail(rdvId);
+			}
 		} else if (!open) {
-			if (saveTimer) clearTimeout(saveTimer);
-			detail = null;
+			void (async () => {
+				await flushNote();
+				detail = null;
+				loadedRdvId = null;
+			})();
 		}
+	});
+
+	onDestroy(() => {
+		void flushNote();
 	});
 
 	onMount(async () => {
@@ -159,15 +176,8 @@
 		const current = rdv;
 		if (!current || current.statut === 'annule') return;
 		try {
-			const result = await rdvUpdate({
-				id: current.id,
-				client_id: current.client_id,
-				tarif_id: current.tarif_id,
-				debut: current.debut,
-				duree_minutes: current.duree_minutes,
-				note: current.note
-			});
-			applyRdv(result.rdv);
+			const updated = await rdvSetNote(current.id, current.note);
+			applyRdv(updated);
 		} catch (e) {
 			toast.error(userMessage(e));
 		}
@@ -176,6 +186,11 @@
 	function rappelLabel(r: RappelNtfy): string {
 		const kind = r.type === '24h' ? '24 h' : '1 h';
 		return r.etat === 'programme' ? `${kind} programmé` : `${kind} annulé`;
+	}
+
+	async function openEdit() {
+		await flushNote();
+		editOpen = true;
 	}
 
 	function onEditSaved() {
@@ -200,8 +215,11 @@
 		{:else if rdv}
 			<RdvContextMenu
 				{rdv}
+				{settings}
+				{tarifs}
 				showOpen={false}
 				onOpen={() => {}}
+				onEdit={openEdit}
 				onUpdated={() => {
 					if (rdvId) loadDetail(rdvId);
 					onUpdated();
@@ -252,7 +270,7 @@
 						{:else}
 							<p class="text-muted-foreground text-sm">Aucune note.</p>
 						{/if}
-					{:else}
+					{:else if !editOpen}
 						{#key rdv.id}
 							<NoteEditor
 								noteId={rdv.id}
@@ -335,7 +353,7 @@
 					<p class="text-muted-foreground text-sm">Ce rendez-vous est annulé.</p>
 				{:else}
 					<div class="grid grid-cols-2 gap-2">
-						<Button variant="outline" onclick={() => (editOpen = true)}>Modifier</Button>
+						<Button variant="outline" onclick={() => void openEdit()}>Modifier</Button>
 						<Button variant="destructive" onclick={cancelRdv} disabled={cancelling}>
 							Annuler
 						</Button>
