@@ -101,7 +101,7 @@
 		if (rdvId) {
 			const detail = await rdvGet(rdvId);
 			const rdv = detail.rdv;
-			clientId = rdv.client_id;
+			clientId = rdv.client_id ?? '';
 			tarifId = rdv.tarif_id ?? '';
 			debutLocal = utcIsoToLocalDatetime(rdv.debut);
 			dureeMinutes = String(rdv.duree_minutes);
@@ -110,7 +110,7 @@
 			return;
 		}
 
-		clientId = presetClientId ?? clients[0]?.id ?? '';
+		clientId = presetClientId ?? '';
 		tarifId = tarifForNewRdv(clientId);
 		const tarif = tarifs.find((t) => t.id === tarifId);
 		dureeMinutes = String(tarif?.duree_minutes ?? 60);
@@ -144,17 +144,13 @@
 
 	async function submit() {
 		if (!formReady) return;
-		if (!clientId) {
-			toast.error('Sélectionnez un client');
-			return;
-		}
 		overlapError = '';
 		saving = true;
 		try {
 			if (isEdit && rdvId) {
 				const result = await rdvUpdate({
 					id: rdvId,
-					client_id: clientId,
+					client_id: clientId || null,
 					tarif_id: tarifId || null,
 					debut: localDatetimeToUtcIso(debutLocal),
 					duree_minutes: Number.parseInt(dureeMinutes, 10),
@@ -166,7 +162,7 @@
 				onSaved(result);
 			} else {
 				const result = await rdvCreate({
-					client_id: clientId,
+					client_id: clientId || null,
 					tarif_id: tarifId || null,
 					debut: localDatetimeToUtcIso(debutLocal),
 					duree_minutes: Number.parseInt(dureeMinutes, 10),
@@ -203,6 +199,7 @@
 					{clients}
 					value={clientId}
 					loaded={listsLoaded}
+					allowEmpty
 					onValueChange={(id) => {
 						clientId = id;
 						if (!isEdit) {

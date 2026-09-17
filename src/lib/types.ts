@@ -33,7 +33,7 @@ export type Tarif = {
 
 export type Rdv = {
 	id: string;
-	client_id: string;
+	client_id: string | null;
 	tarif_id: string | null;
 	debut: string;
 	duree_minutes: number;

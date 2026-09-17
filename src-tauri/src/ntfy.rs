@@ -38,12 +38,20 @@ impl ReqwestNtfy {
         let (title, message, priority) = match kind {
             RappelKind::H24 => (
                 "Rappel RDV demain".to_string(),
-                format!("RDV avec {} le {}", client_nom, debut.format("%d/%m %H:%M")),
+                if client_nom.is_empty() {
+                    format!("RDV le {}", debut.format("%d/%m %H:%M"))
+                } else {
+                    format!("RDV avec {} le {}", client_nom, debut.format("%d/%m %H:%M"))
+                },
                 4,
             ),
             RappelKind::H1 => (
                 "Rappel RDV dans 1h".to_string(),
-                format!("RDV avec {} dans 1 heure", client_nom),
+                if client_nom.is_empty() {
+                    "RDV dans 1 heure".to_string()
+                } else {
+                    format!("RDV avec {} dans 1 heure", client_nom)
+                },
                 5,
             ),
         };

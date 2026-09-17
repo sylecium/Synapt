@@ -51,7 +51,7 @@ pub struct Tarif {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Rdv {
     pub id: String,
-    pub client_id: String,
+    pub client_id: Option<String>,
     pub tarif_id: Option<String>,
     pub debut: String,
     pub duree_minutes: i64,

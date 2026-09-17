@@ -54,15 +54,6 @@ where
     f(&conn)
 }
 
-fn fetch_client_nom(conn: &Connection, client_id: &str) -> Result<String, AppError> {
-    conn.query_row(
-        "SELECT nom FROM clients WHERE id = ?1",
-        params![client_id],
-        |row| row.get(0),
-    )
-    .map_err(|_| AppError::new("client introuvable"))
-}
-
 fn fetch_tarif(conn: &Connection, tarif_id: &str) -> Result<Tarif, AppError> {
     repo::tarifs_get(conn, tarif_id).map_err(|_| AppError::new("tarif introuvable"))
 }
@@ -148,7 +139,7 @@ fn ntfy_collect_pending(
             continue;
         }
         let debut = repo::parse_debut_utc(&rdv.debut)?;
-        let client_nom = fetch_client_nom(conn, &rdv.client_id)?;
+        let client_nom = rdv.client_nom.clone();
         for kind in kinds_for_settings(settings) {
             let echeance_at = echeance(debut, kind);
             let deja = rappel_deja_programme(conn, &rdv.id, kind)?;
@@ -194,13 +185,9 @@ pub fn ntfy_sync<C: NtfyClient>(
         let ntfy_client = client_factory(rdv, job.kind);
         match ntfy_client.publish(job.echeance_at, job.kind) {
             Ok(ntfy_id) => {
-                if let Err(e) = insert_rappel(
-                    conn,
-                    &job.rdv_id,
-                    job.kind,
-                    &ntfy_id,
-                    job.echeance_at,
-                ) {
+                if let Err(e) =
+                    insert_rappel(conn, &job.rdv_id, job.kind, &ntfy_id, job.echeance_at)
+                {
                     warnings.push(e.message);
                 }
             }
@@ -369,8 +356,7 @@ async fn ensure_stripe_on_rdv(
         .await
     {
         Ok((stripe_id, stripe_url)) => {
-            let updated =
-                with_db(|conn| save_stripe_link(conn, &rdv.id, &stripe_id, &stripe_url))?;
+            let updated = with_db(|conn| save_stripe_link(conn, &rdv.id, &stripe_id, &stripe_url))?;
             Ok((updated, warnings))
         }
         Err(e) => {
@@ -568,7 +554,7 @@ pub fn rdv_get(id: String) -> Result<RdvDetail, String> {
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn rdv_create(
-    client_id: String,
+    client_id: Option<String>,
     tarif_id: Option<String>,
     debut: String,
     duree_minutes: i64,
@@ -580,7 +566,7 @@ pub async fn rdv_create(
     let rdv = with_db(|conn| {
         repo::rdv_create(
             conn,
-            &client_id,
+            client_id.as_deref(),
             tarif_id.clone(),
             &debut,
             duree_minutes,
@@ -602,7 +588,7 @@ pub async fn rdv_create(
 #[tauri::command(rename_all = "snake_case")]
 pub async fn rdv_update(
     id: String,
-    client_id: String,
+    client_id: Option<String>,
     tarif_id: Option<String>,
     debut: String,
     duree_minutes: i64,
@@ -625,7 +611,7 @@ pub async fn rdv_update(
         repo::rdv_update(
             conn,
             &id,
-            &client_id,
+            client_id.as_deref(),
             tarif_id.clone(),
             &debut,
             duree_minutes,
@@ -689,18 +675,15 @@ pub async fn ntfy_test() -> Result<(), String> {
 }
 
 fn pdf_root() -> Result<PathBuf, AppError> {
-    let home = dirs::home_dir().ok_or_else(|| {
-        AppError::new("Impossible d'enregistrer le PDF dans le dossier Synapt.")
-    })?;
+    let home = dirs::home_dir()
+        .ok_or_else(|| AppError::new("Impossible d'enregistrer le PDF dans le dossier Synapt."))?;
     Ok(home.join("Synapt"))
 }
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn honoraires_list(client_id: Option<String>) -> Result<Vec<Honoraire>, String> {
-    with_db(|conn| {
-        crate::honoraires::honoraires_list(conn, client_id.as_deref())
-    })
-    .map_err(|e| e.message)
+    with_db(|conn| crate::honoraires::honoraires_list(conn, client_id.as_deref()))
+        .map_err(|e| e.message)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -734,8 +717,7 @@ pub fn honoraires_ouvrir(id: String) -> Result<String, String> {
 #[tauri::command(rename_all = "snake_case")]
 pub fn honoraires_annuler(id: String) -> Result<HonoraireDetail, String> {
     let root = pdf_root().map_err(|e| e.message)?;
-    with_db(|conn| crate::honoraires::honoraires_annuler(conn, &id, &root))
-        .map_err(|e| e.message)
+    with_db(|conn| crate::honoraires::honoraires_annuler(conn, &id, &root)).map_err(|e| e.message)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -764,11 +746,11 @@ pub fn run_ntfy_sync() {
 #[cfg(test)]
 mod tests {
     use super::{insert_rappel, mark_rappels_annule, ntfy_sync, settings_apply, SettingsSetInput};
-    use crate::repo::*;
     use crate::db::migrate;
     use crate::error::AppError;
     use crate::models::{Client, ClientWrite, Tarif};
     use crate::ntfy::{NtfyClient, RappelKind};
+    use crate::repo::*;
     use crate::settings::Settings;
     use chrono::{DateTime, Duration, TimeZone, Utc};
     use rusqlite::{params, Connection};
@@ -834,7 +816,7 @@ mod tests {
         let tarif = seed_tarif(&conn);
         let rdv = rdv_create(
             &conn,
-            &client.id,
+            Some(&client.id),
             Some(tarif.id.clone()),
             "2026-09-11T10:00:00Z",
             60,
@@ -854,7 +836,7 @@ mod tests {
         let tarif = seed_tarif(&conn);
         let rdv = rdv_create(
             &conn,
-            &client.id,
+            Some(&client.id),
             Some(tarif.id.clone()),
             "2026-09-11T10:00:00Z",
             60,
@@ -893,7 +875,7 @@ mod tests {
         let tarif = seed_tarif(&conn);
         rdv_create(
             &conn,
-            &alice.id,
+            Some(&alice.id),
             Some(tarif.id.clone()),
             "2026-09-11T10:00:00Z",
             60,
@@ -902,7 +884,7 @@ mod tests {
         .unwrap();
         rdv_create(
             &conn,
-            &bob.id,
+            Some(&bob.id),
             Some(tarif.id),
             "2026-09-12T10:00:00Z",
             60,
@@ -912,7 +894,7 @@ mod tests {
 
         let list = rdv_list(&conn, None, None, Some(&alice.id)).unwrap();
         assert_eq!(list.len(), 1);
-        assert_eq!(list[0].client_id, alice.id);
+        assert_eq!(list[0].client_id.as_deref(), Some(alice.id.as_str()));
         assert_eq!(list[0].client_nom, "Alice");
     }
 
@@ -923,7 +905,7 @@ mod tests {
         let tarif = seed_tarif(&conn);
         let a = rdv_create(
             &conn,
-            &alice.id,
+            Some(&alice.id),
             Some(tarif.id.clone()),
             "2026-09-11T10:00:00Z",
             60,
@@ -932,7 +914,7 @@ mod tests {
         .unwrap();
         rdv_create(
             &conn,
-            &alice.id,
+            Some(&alice.id),
             Some(tarif.id),
             "2026-09-12T10:00:00Z",
             60,
@@ -951,7 +933,15 @@ mod tests {
     fn rappel_reprogram_apres_annule() {
         let conn = crate::db::open_memory().unwrap();
         let client = seed_client(&conn);
-        let rdv = rdv_create(&conn, &client.id, None, "2026-09-12T10:00:00Z", 60, None).unwrap();
+        let rdv = rdv_create(
+            &conn,
+            Some(&client.id),
+            None,
+            "2026-09-12T10:00:00Z",
+            60,
+            None,
+        )
+        .unwrap();
         let echeance1 = Utc.with_ymd_and_hms(2026, 9, 12, 9, 0, 0).unwrap();
         insert_rappel(&conn, &rdv.id, RappelKind::H1, "ntfy-1", echeance1).unwrap();
         mark_rappels_annule(&conn, &rdv.id).unwrap();
@@ -981,7 +971,7 @@ mod tests {
         rdv_update(
             &conn,
             &rdv.id,
-            &client.id,
+            Some(&client.id),
             None,
             "2026-09-12T14:00:00Z",
             60,
@@ -1012,9 +1002,47 @@ mod tests {
     fn rdv_sans_tarif_a_tarif_nom_vide() {
         let conn = crate::db::open_memory().unwrap();
         let client = seed_client(&conn);
-        let rdv = rdv_create(&conn, &client.id, None, "2026-09-11T10:00:00Z", 60, None).unwrap();
+        let rdv = rdv_create(
+            &conn,
+            Some(&client.id),
+            None,
+            "2026-09-11T10:00:00Z",
+            60,
+            None,
+        )
+        .unwrap();
         assert_eq!(rdv.client_nom, "Alice");
         assert_eq!(rdv.tarif_nom, "");
+    }
+
+    #[test]
+    fn rdv_sans_client_est_accepte() {
+        let conn = crate::db::open_memory().unwrap();
+        let tarif = seed_tarif(&conn);
+        let rdv = rdv_create(
+            &conn,
+            None,
+            Some(tarif.id.clone()),
+            "2026-09-11T10:00:00Z",
+            60,
+            None,
+        )
+        .unwrap();
+        assert!(rdv.client_id.is_none());
+        assert_eq!(rdv.client_nom, "");
+        assert_eq!(rdv.statut, "planifie");
+
+        let got = rdv_get(&conn, &rdv.id).unwrap();
+        assert!(got.rdv.client_id.is_none());
+        let list = rdv_list(
+            &conn,
+            Some("2026-09-01T00:00:00Z"),
+            Some("2026-09-12T00:00:00Z"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(list.len(), 1);
+        assert!(list[0].client_id.is_none());
     }
 
     #[test]
@@ -1024,15 +1052,22 @@ mod tests {
         let t = seed_tarif(&conn);
         rdv_create(
             &conn,
-            &c.id,
+            Some(&c.id),
             Some(t.id.clone()),
             "2026-09-11T10:00:00Z",
             60,
             None,
         )
         .unwrap();
-        let err =
-            rdv_create(&conn, &c.id, Some(t.id), "2026-09-11T10:30:00Z", 30, None).unwrap_err();
+        let err = rdv_create(
+            &conn,
+            Some(&c.id),
+            Some(t.id),
+            "2026-09-11T10:30:00Z",
+            30,
+            None,
+        )
+        .unwrap_err();
         assert!(
             err.message.contains("chevauche") || err.message.contains("horaire"),
             "message: {}",
@@ -1047,7 +1082,7 @@ mod tests {
         let t = seed_tarif(&conn);
         let a = rdv_create(
             &conn,
-            &c.id,
+            Some(&c.id),
             Some(t.id.clone()),
             "2026-09-11T10:00:00Z",
             60,
@@ -1055,7 +1090,15 @@ mod tests {
         )
         .unwrap();
         rdv_annuler(&conn, &a.id).unwrap();
-        let b = rdv_create(&conn, &c.id, Some(t.id), "2026-09-11T10:00:00Z", 60, None).unwrap();
+        let b = rdv_create(
+            &conn,
+            Some(&c.id),
+            Some(t.id),
+            "2026-09-11T10:00:00Z",
+            60,
+            None,
+        )
+        .unwrap();
         assert_eq!(b.statut, "planifie");
     }
 
@@ -1065,7 +1108,7 @@ mod tests {
         let client = seed_client(&conn);
         let now = Utc.with_ymd_and_hms(2026, 9, 1, 10, 0, 0).unwrap();
         let debut = (now + Duration::days(10)).to_rfc3339();
-        rdv_create(&conn, &client.id, None, &debut, 60, None).unwrap();
+        rdv_create(&conn, Some(&client.id), None, &debut, 60, None).unwrap();
         let settings = test_settings("topic-test", true);
         let fake = FakeNtfy {
             published: std::sync::Arc::new(Mutex::new(vec![])),
@@ -1080,7 +1123,7 @@ mod tests {
         let client = seed_client(&conn);
         let now = Utc.with_ymd_and_hms(2026, 9, 1, 10, 0, 0).unwrap();
         let debut = (now + Duration::hours(2)).to_rfc3339();
-        rdv_create(&conn, &client.id, None, &debut, 60, None).unwrap();
+        rdv_create(&conn, Some(&client.id), None, &debut, 60, None).unwrap();
         let settings = test_settings("topic-test", true);
         let fake = FakeNtfy {
             published: std::sync::Arc::new(Mutex::new(vec![])),
@@ -1097,14 +1140,22 @@ mod tests {
         let t = seed_tarif(&conn);
         let a = rdv_create(
             &conn,
-            &c.id,
+            Some(&c.id),
             Some(t.id.clone()),
             "2026-09-11T10:00:00Z",
             60,
             None,
         )
         .unwrap();
-        rdv_create(&conn, &c.id, Some(t.id), "2026-09-11T11:00:00Z", 60, None).unwrap();
+        rdv_create(
+            &conn,
+            Some(&c.id),
+            Some(t.id),
+            "2026-09-11T11:00:00Z",
+            60,
+            None,
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO rappels_ntfy (id, rdv_id, type, ntfy_id, echeance, etat) VALUES (?1, ?2, '1h', 'fake-id', ?3, 'programme')",
             rusqlite::params![
@@ -1115,8 +1166,16 @@ mod tests {
         )
         .unwrap();
 
-        let err =
-            rdv_update(&conn, &a.id, &c.id, None, "2026-09-11T11:00:00Z", 60, None).unwrap_err();
+        let err = rdv_update(
+            &conn,
+            &a.id,
+            Some(&c.id),
+            None,
+            "2026-09-11T11:00:00Z",
+            60,
+            None,
+        )
+        .unwrap_err();
         assert!(
             err.message.contains("chevauche") || err.message.contains("horaire"),
             "message: {}",
@@ -1271,7 +1330,15 @@ mod tests {
         .unwrap();
         notes_upsert(&conn, None, Some(&alice.id), "note alice").unwrap();
         notes_upsert(&conn, None, Some(&bob.id), "note bob").unwrap();
-        let rdv = rdv_create(&conn, &alice.id, None, "2026-09-11T10:00:00Z", 60, None).unwrap();
+        let rdv = rdv_create(
+            &conn,
+            Some(&alice.id),
+            None,
+            "2026-09-11T10:00:00Z",
+            60,
+            None,
+        )
+        .unwrap();
         rdv_annuler(&conn, &rdv.id).unwrap();
         conn.execute(
             "INSERT INTO rappels_ntfy (id, rdv_id, type, ntfy_id, echeance, etat) VALUES (?1, ?2, '1h', 'fake-id', ?3, 'annule')",
@@ -1286,8 +1353,15 @@ mod tests {
         assert!(notes_list(&conn, Some(alice.id.clone()), false)
             .unwrap()
             .is_empty());
-        assert_eq!(notes_list(&conn, Some(bob.id.clone()), false).unwrap().len(), 1);
-        assert!(rdv_list(&conn, None, None, Some(&alice.id)).unwrap().is_empty());
+        assert_eq!(
+            notes_list(&conn, Some(bob.id.clone()), false)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(rdv_list(&conn, None, None, Some(&alice.id))
+            .unwrap()
+            .is_empty());
         let rappels: i64 = conn
             .query_row("SELECT COUNT(*) FROM rappels_ntfy", [], |row| row.get(0))
             .unwrap();
@@ -1298,7 +1372,7 @@ mod tests {
     fn clients_delete_refuse_rdv_planifie() {
         let conn = crate::db::open_memory().unwrap();
         let c = seed_client(&conn);
-        rdv_create(&conn, &c.id, None, "2026-09-11T10:00:00Z", 60, None).unwrap();
+        rdv_create(&conn, Some(&c.id), None, "2026-09-11T10:00:00Z", 60, None).unwrap();
         let err = clients_delete(&conn, &c.id).unwrap_err();
         assert!(err.message.contains("rendez-vous prévus"));
         assert_eq!(clients_get(&conn, &c.id).unwrap().nom, "Alice");
@@ -1353,7 +1427,15 @@ mod tests {
     fn rdv_set_note_maj_uniquement_note() {
         let conn = crate::db::open_memory().unwrap();
         let client = seed_client(&conn);
-        let rdv = rdv_create(&conn, &client.id, None, "2026-09-11T10:00:00Z", 60, None).unwrap();
+        let rdv = rdv_create(
+            &conn,
+            Some(&client.id),
+            None,
+            "2026-09-11T10:00:00Z",
+            60,
+            None,
+        )
+        .unwrap();
         let updated = rdv_set_note(&conn, &rdv.id, Some("note test".into())).unwrap();
         assert_eq!(updated.note.as_deref(), Some("note test"));
         rdv_annuler(&conn, &rdv.id).unwrap();
@@ -1365,8 +1447,7 @@ mod tests {
     fn rdv_create_refuse_debut_invalide() {
         let conn = crate::db::open_memory().unwrap();
         let client = seed_client(&conn);
-        let err =
-            rdv_create(&conn, &client.id, None, "pas-une-date", 60, None).unwrap_err();
+        let err = rdv_create(&conn, Some(&client.id), None, "pas-une-date", 60, None).unwrap_err();
         assert!(err.message.contains("valide"));
     }
 
@@ -1378,7 +1459,7 @@ mod tests {
         let t2 = tarifs_upsert(&conn, None, "B", 60, 6000, true).unwrap();
         let rdv = rdv_create(
             &conn,
-            &client.id,
+            Some(&client.id),
             Some(t1.id.clone()),
             "2026-09-11T10:00:00Z",
             60,
@@ -1393,7 +1474,7 @@ mod tests {
         let updated = rdv_update(
             &conn,
             &rdv.id,
-            &client.id,
+            Some(&client.id),
             Some(t2.id.clone()),
             "2026-09-11T10:00:00Z",
             60,
@@ -1409,7 +1490,15 @@ mod tests {
     fn rdv_dashboard_formats_debut_mixtes() {
         let conn = crate::db::open_memory().unwrap();
         let client = seed_client(&conn);
-        rdv_create(&conn, &client.id, None, "2026-09-11T10:00:00.000Z", 60, None).unwrap();
+        rdv_create(
+            &conn,
+            Some(&client.id),
+            None,
+            "2026-09-11T10:00:00.000Z",
+            60,
+            None,
+        )
+        .unwrap();
         let now = Utc.with_ymd_and_hms(2026, 9, 11, 8, 0, 0).unwrap();
         let dash = rdv_dashboard(&conn, now).unwrap();
         assert_eq!(dash.aujourdhui.len(), 1);

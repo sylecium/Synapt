@@ -138,7 +138,9 @@ pub fn honoraires_create(
         }
     }
     if cabinet.nom.trim().is_empty() {
-        return Err(AppError::new("Indiquez le nom du cabinet dans les réglages."));
+        return Err(AppError::new(
+            "Indiquez le nom du cabinet dans les réglages.",
+        ));
     }
     if !MOYENS.contains(&moyen) {
         return Err(AppError::new("Moyen de paiement inconnu."));
@@ -161,9 +163,16 @@ pub fn honoraires_create(
             rdvs.push(rdv);
         }
 
-        let client_id = rdvs[0].client_id.clone();
-        if rdvs.iter().any(|r| r.client_id != client_id) {
-            return Err(AppError::new("Une note ne peut concerner qu'un seul client."));
+        let client_id = rdvs[0].client_id.clone().ok_or_else(|| {
+            AppError::new("Attribuez un client au rendez-vous pour émettre une note d'honoraires.")
+        })?;
+        if rdvs
+            .iter()
+            .any(|r| r.client_id.as_deref() != Some(client_id.as_str()))
+        {
+            return Err(AppError::new(
+                "Une note ne peut concerner qu'un seul client.",
+            ));
         }
 
         rdvs.sort_by(|a, b| a.debut.cmp(&b.debut));
@@ -358,7 +367,11 @@ pub fn sanitize_prefixe(raw: &str) -> Result<String, AppError> {
     if s.is_empty() {
         return Ok(String::new());
     }
-    if s.len() > 12 || !s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+    if s.len() > 12
+        || !s
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
         return Err(AppError::new(
             "Le préfixe du numéro n'accepte que lettres, chiffres, _ et - (12 caractères max).",
         ));
@@ -429,7 +442,7 @@ mod tests {
         tarif_id: Option<String>,
         debut: &str,
     ) -> crate::models::Rdv {
-        crate::repo::rdv_create(conn, client_id, tarif_id, debut, 60, None).unwrap()
+        crate::repo::rdv_create(conn, Some(client_id), tarif_id, debut, 60, None).unwrap()
     }
 
     fn tempfile_dir() -> std::path::PathBuf {
@@ -452,7 +465,8 @@ mod tests {
             },
         )
         .unwrap();
-        let tarif = crate::repo::tarifs_upsert(&conn, None, "Consultation", 60, 5000, true).unwrap();
+        let tarif =
+            crate::repo::tarifs_upsert(&conn, None, "Consultation", 60, 5000, true).unwrap();
         let rdv = seed_rdv(&conn, &client.id, Some(tarif.id), "2026-09-11T10:00:00Z");
         let dir = tempfile_dir();
         let detail =
@@ -472,6 +486,17 @@ mod tests {
     }
 
     #[test]
+    fn create_refuse_rdv_sans_client() {
+        let conn = crate::db::open_memory().unwrap();
+        crate::db::migrate(&conn).unwrap();
+        let rdv =
+            crate::repo::rdv_create(&conn, None, None, "2026-09-11T10:00:00Z", 60, None).unwrap();
+        let dir = tempfile_dir();
+        let err = honoraires_create(&conn, &cabinet_ok(), &[rdv.id], "especes", &dir).unwrap_err();
+        assert!(err.message.contains("client"));
+    }
+
+    #[test]
     fn deuxieme_note_incremente() {
         let conn = crate::db::open_memory().unwrap();
         crate::db::migrate(&conn).unwrap();
@@ -483,8 +508,14 @@ mod tests {
             },
         )
         .unwrap();
-        let tarif = crate::repo::tarifs_upsert(&conn, None, "Consultation", 60, 5000, true).unwrap();
-        let a = seed_rdv(&conn, &client.id, Some(tarif.id.clone()), "2026-09-11T10:00:00Z");
+        let tarif =
+            crate::repo::tarifs_upsert(&conn, None, "Consultation", 60, 5000, true).unwrap();
+        let a = seed_rdv(
+            &conn,
+            &client.id,
+            Some(tarif.id.clone()),
+            "2026-09-11T10:00:00Z",
+        );
         let b = seed_rdv(&conn, &client.id, Some(tarif.id), "2026-09-12T10:00:00Z");
         let dir = tempfile_dir();
         let d1 = honoraires_create(&conn, &cabinet_ok(), &[a.id], "cb", &dir).unwrap();
@@ -683,8 +714,7 @@ mod tests {
         let a = seed_rdv(&conn, &client.id, None, "2026-09-11T10:00:00Z");
         let b = seed_rdv(&conn, &client.id, None, "2026-09-12T10:00:00Z");
         let dir = tempfile_dir();
-        let d1 =
-            honoraires_create(&conn, &cabinet_ok(), &[a.id.clone()], "especes", &dir).unwrap();
+        let d1 = honoraires_create(&conn, &cabinet_ok(), &[a.id.clone()], "especes", &dir).unwrap();
         honoraires_annuler(&conn, &d1.honoraire.id, &dir).unwrap();
         let dispo = honoraires_rdvs_disponibles(&conn, &client.id).unwrap();
         assert!(dispo.iter().any(|r| r.id == a.id));
@@ -735,7 +765,8 @@ mod tests {
             },
         )
         .unwrap();
-        let tarif = crate::repo::tarifs_upsert(&conn, None, "Consultation", 60, 5000, true).unwrap();
+        let tarif =
+            crate::repo::tarifs_upsert(&conn, None, "Consultation", 60, 5000, true).unwrap();
         let rdv = seed_rdv(&conn, &client.id, Some(tarif.id), "2026-09-11T10:00:00Z");
         let mut cab = cabinet_ok();
         cab.adresse = "1 avenue de la République, 33000 Bordeaux".into();

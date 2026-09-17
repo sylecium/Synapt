@@ -10,15 +10,19 @@
 		clients: Client[];
 		value: string;
 		loaded?: boolean;
+		allowEmpty?: boolean;
 		onValueChange: (id: string) => void;
 	};
 
-	let { clients, value, loaded = true, onValueChange }: Props = $props();
+	let { clients, value, loaded = true, allowEmpty = false, onValueChange }: Props = $props();
 
 	let open = $state(false);
 	let triggerRef = $state<HTMLButtonElement>(null!);
 
 	const selectedLabel = $derived(clients.find((c) => c.id === value)?.nom);
+	const triggerText = $derived(
+		selectedLabel ?? (allowEmpty ? 'Aucun' : 'Choisir un client')
+	);
 
 	function closeAndFocusTrigger() {
 		open = false;
@@ -30,7 +34,7 @@
 
 {#if !loaded}
 	<Button variant="outline" class="w-full justify-between" disabled>Chargement…</Button>
-{:else if clients.length === 0}
+{:else if clients.length === 0 && !allowEmpty}
 	<a href="/clients" class="text-primary text-sm underline-offset-4 hover:underline">Créer un client</a>
 {:else}
 	<Popover.Root bind:open>
@@ -43,7 +47,7 @@
 					role="combobox"
 					aria-expanded={open}
 				>
-					{selectedLabel ?? 'Choisir un client'}
+					{triggerText}
 					<ChevronsUpDownIcon class="ms-2 size-4 shrink-0 opacity-50" />
 				</Button>
 			{/snippet}
@@ -54,6 +58,17 @@
 				<Command.List>
 					<Command.Empty>Aucun client trouvé.</Command.Empty>
 					<Command.Group>
+						{#if allowEmpty}
+							<Command.Item
+								value="aucun"
+								onSelect={() => {
+									onValueChange('');
+									closeAndFocusTrigger();
+								}}
+							>
+								Aucun
+							</Command.Item>
+						{/if}
 						{#each clients as client (client.id)}
 							<Command.Item
 								value={client.nom}

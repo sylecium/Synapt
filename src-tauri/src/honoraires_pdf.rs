@@ -146,9 +146,8 @@ impl PdfBuilder {
 
 fn render_pdf(detail: &HonoraireDetail) -> Result<Vec<u8>, AppError> {
     let mut font_warnings = Vec::new();
-    let font = ParsedFont::from_bytes(DEJA_VU_SANS, 0, &mut font_warnings).ok_or_else(|| {
-        AppError::new("Impossible d'enregistrer le PDF dans le dossier Synapt.")
-    })?;
+    let font = ParsedFont::from_bytes(DEJA_VU_SANS, 0, &mut font_warnings)
+        .ok_or_else(|| AppError::new("Impossible d'enregistrer le PDF dans le dossier Synapt."))?;
     let font_bold = ParsedFont::from_bytes(DEJA_VU_SANS_BOLD, 0, &mut font_warnings)
         .ok_or_else(|| AppError::new("Impossible d'enregistrer le PDF dans le dossier Synapt."))?;
 
@@ -161,13 +160,7 @@ fn render_pdf(detail: &HonoraireDetail) -> Result<Vec<u8>, AppError> {
     let date_emission = format_created_at(&h.created_at);
 
     b.text_at(LEFT, b.y, &bold, 18.0, "FACTURE");
-    b.text_at(
-        128.0,
-        b.y,
-        &regular,
-        10.0,
-        &format!("n° {}", h.numero),
-    );
+    b.text_at(128.0, b.y, &regular, 10.0, &format!("n° {}", h.numero));
     b.y -= 6.0;
     b.text_at(LEFT, b.y, &bold, 10.0, "Facture acquittée");
     b.text_at(
@@ -206,13 +199,27 @@ fn render_pdf(detail: &HonoraireDetail) -> Result<Vec<u8>, AppError> {
         }
     }
     if let Some(ref t) = h.cabinet_telephone {
-        col(&mut b, LEFT, &mut y_left, &regular, 9.0, &format!("Tél. {t}"));
+        col(
+            &mut b,
+            LEFT,
+            &mut y_left,
+            &regular,
+            9.0,
+            &format!("Tél. {t}"),
+        );
     }
     if let Some(ref e) = h.cabinet_email {
         col(&mut b, LEFT, &mut y_left, &regular, 9.0, e);
     }
     if let Some(ref s) = h.cabinet_siret {
-        col(&mut b, LEFT, &mut y_left, &regular, 9.0, &format!("SIRET {s}"));
+        col(
+            &mut b,
+            LEFT,
+            &mut y_left,
+            &regular,
+            9.0,
+            &format!("SIRET {s}"),
+        );
         if let Some(tva) = tva_intra_from_siret(s) {
             col(
                 &mut b,
@@ -510,23 +517,8 @@ fn below_thousand(n: u64) -> String {
 }
 
 const UNITS: [&str; 17] = [
-    "",
-    "un",
-    "deux",
-    "trois",
-    "quatre",
-    "cinq",
-    "six",
-    "sept",
-    "huit",
-    "neuf",
-    "dix",
-    "onze",
-    "douze",
-    "treize",
-    "quatorze",
-    "quinze",
-    "seize",
+    "", "un", "deux", "trois", "quatre", "cinq", "six", "sept", "huit", "neuf", "dix", "onze",
+    "douze", "treize", "quatorze", "quinze", "seize",
 ];
 
 fn below_hundred(n: u64) -> String {

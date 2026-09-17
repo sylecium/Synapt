@@ -82,7 +82,7 @@ export const rdvList = (p: { from?: string; to?: string; client_id?: string }) =
 export const rdvGet = (id: string) => invoke<RdvDetail>('rdv_get', { id });
 
 export const rdvCreate = (p: {
-	client_id: string;
+	client_id: string | null;
 	tarif_id: string | null;
 	debut: string;
 	duree_minutes: number;
@@ -91,7 +91,7 @@ export const rdvCreate = (p: {
 
 export const rdvUpdate = (p: {
 	id: string;
-	client_id: string;
+	client_id: string | null;
 	tarif_id: string | null;
 	debut: string;
 	duree_minutes: number;

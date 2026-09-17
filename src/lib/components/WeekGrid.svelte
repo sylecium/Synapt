@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import type { Rdv } from '$lib/types';
-	import { formatTime, sameLocalDay, slotUtcIso, weekDaysFromMonday } from '$lib/format';
+	import { formatTime, rdvClientLabel, sameLocalDay, slotUtcIso, weekDaysFromMonday } from '$lib/format';
 	import RdvContextMenu from '$lib/components/RdvContextMenu.svelte';
 	import * as ContextMenu from '$lib/components/ui/context-menu/index.js';
 
@@ -260,7 +260,7 @@
 											onRdv(block.rdv);
 										}}
 									>
-										<span class="font-medium">{block.rdv.client_nom}</span>
+										<span class="font-medium">{rdvClientLabel(block.rdv)}</span>
 										<span class="font-mono tabular-nums opacity-80">{timeLabel(Math.floor(block.labelMins / 60), block.labelMins % 60)}</span>
 									</button>
 								{/snippet}
@@ -284,7 +284,7 @@
 											class="bg-warn-bg text-warn hover:opacity-90 rounded-md px-2 py-1 text-left text-xs"
 											onclick={() => onRdv(rdv)}
 										>
-											<span class="font-medium">{rdv.client_nom}</span>
+											<span class="font-medium">{rdvClientLabel(rdv)}</span>
 											<span class="ml-1 font-mono tabular-nums">{formatTime(rdv.debut)}</span>
 										</button>
 									{/snippet}

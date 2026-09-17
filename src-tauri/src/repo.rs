@@ -22,10 +22,10 @@ pub fn ensure_migrated(conn: &Connection) -> Result<(), AppError> {
 pub(crate) const RDV_SELECT: &str = "\
 SELECT rdv.id, rdv.client_id, rdv.tarif_id, rdv.debut, rdv.duree_minutes, \
 rdv.jitsi_url, rdv.stripe_url, rdv.stripe_id, rdv.note, rdv.statut, \
-rdv.created_at, rdv.updated_at, clients.nom AS client_nom, \
+rdv.created_at, rdv.updated_at, COALESCE(clients.nom, '') AS client_nom, \
 COALESCE(tarifs.nom, '') AS tarif_nom \
 FROM rdv \
-JOIN clients ON clients.id = rdv.client_id \
+LEFT JOIN clients ON clients.id = rdv.client_id \
 LEFT JOIN tarifs ON tarifs.id = rdv.tarif_id";
 
 const CLIENT_SELECT: &str = "SELECT id, nom, email, telephone, statut, memo, tarif_id,
@@ -367,26 +367,26 @@ pub fn clients_delete(conn: &Connection, id: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-    pub fn tarifs_upsert(
-        conn: &Connection,
-        id: Option<&str>,
-        nom: &str,
-        duree_minutes: i64,
-        prix_centimes: i64,
-        prix_ttc: bool,
-    ) -> Result<Tarif, AppError> {
-        ensure_migrated(conn)?;
-        if nom.trim().is_empty() {
-            return Err(AppError::new("Le nom du tarif est requis."));
-        }
-        if duree_minutes <= 0 {
-            return Err(AppError::new("La durée doit être supérieure à zéro."));
-        }
-        if prix_centimes < 0 {
-            return Err(AppError::new("Le prix ne peut pas être négatif."));
-        }
-        let nom = nom.trim();
-        let now = now_iso();
+pub fn tarifs_upsert(
+    conn: &Connection,
+    id: Option<&str>,
+    nom: &str,
+    duree_minutes: i64,
+    prix_centimes: i64,
+    prix_ttc: bool,
+) -> Result<Tarif, AppError> {
+    ensure_migrated(conn)?;
+    if nom.trim().is_empty() {
+        return Err(AppError::new("Le nom du tarif est requis."));
+    }
+    if duree_minutes <= 0 {
+        return Err(AppError::new("La durée doit être supérieure à zéro."));
+    }
+    if prix_centimes < 0 {
+        return Err(AppError::new("Le prix ne peut pas être négatif."));
+    }
+    let nom = nom.trim();
+    let now = now_iso();
     let id = match id {
         Some(existing) => existing.to_string(),
         None => Uuid::new_v4().to_string(),
@@ -482,9 +482,8 @@ pub fn notes_upsert(
 }
 
 fn notes_get(conn: &Connection, id: &str) -> Result<Note, AppError> {
-    let mut stmt = conn.prepare(
-        "SELECT id, client_id, corps, created_at, updated_at FROM notes WHERE id = ?1",
-    )?;
+    let mut stmt = conn
+        .prepare("SELECT id, client_id, corps, created_at, updated_at FROM notes WHERE id = ?1")?;
     let note = stmt.query_row(params![id], row_to_note)?;
     Ok(note)
 }
@@ -514,8 +513,8 @@ pub fn notes_list(
             .map_err(AppError::from);
     }
     let mut stmt = conn.prepare(
-    "SELECT id, client_id, corps, created_at, updated_at FROM notes ORDER BY updated_at DESC",
-)?;
+        "SELECT id, client_id, corps, created_at, updated_at FROM notes ORDER BY updated_at DESC",
+    )?;
     let notes = stmt
         .query_map([], row_to_note)?
         .collect::<Result<Vec<_>, _>>()?;
@@ -533,7 +532,7 @@ pub fn notes_delete(conn: &Connection, id: &str) -> Result<(), AppError> {
 
 pub fn rdv_create(
     conn: &Connection,
-    client_id: &str,
+    client_id: Option<&str>,
     tarif_id: Option<String>,
     debut: &str,
     duree_minutes: i64,
@@ -581,7 +580,7 @@ pub fn rdv_create(
 pub fn rdv_update(
     conn: &Connection,
     id: &str,
-    client_id: &str,
+    client_id: Option<&str>,
     tarif_id: Option<String>,
     debut: &str,
     duree_minutes: i64,
@@ -700,7 +699,10 @@ pub fn rdv_annuler(conn: &Connection, id: &str) -> Result<Rdv, AppError> {
     fetch_rdv(conn, id)
 }
 
-pub fn clients_rappels_ntfy_ids(conn: &Connection, client_id: &str) -> Result<Vec<String>, AppError> {
+pub fn clients_rappels_ntfy_ids(
+    conn: &Connection,
+    client_id: &str,
+) -> Result<Vec<String>, AppError> {
     ensure_migrated(conn)?;
     let mut stmt = conn.prepare(
         "SELECT ntfy_id FROM rappels_ntfy \
@@ -816,11 +818,17 @@ mod tests {
             },
         )
         .unwrap();
-        let rdv = rdv_create(&conn, &client.id, None, "2026-09-11T10:00:00Z", 60, None).unwrap();
-        let dir = PathBuf::from(std::env::temp_dir()).join(format!(
-            "synapt-hon-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let rdv = rdv_create(
+            &conn,
+            Some(&client.id),
+            None,
+            "2026-09-11T10:00:00Z",
+            60,
+            None,
+        )
+        .unwrap();
+        let dir = PathBuf::from(std::env::temp_dir())
+            .join(format!("synapt-hon-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(dir.join("honoraires")).unwrap();
         let cabinet = CabinetSettings {
             nom: "Cabinet Test".into(),

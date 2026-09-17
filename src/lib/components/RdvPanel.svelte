@@ -8,7 +8,7 @@
 	import { openPath } from '@tauri-apps/plugin-opener';
 	import { honorairesOuvrir, rdvGet, rdvSetNote, settingsGet, tarifsList } from '$lib/api';
 	import type { Honoraire, RappelNtfy, Rdv, RdvDetail, SettingsPublic, Tarif } from '$lib/types';
-	import { formatTarifPrix, formatTime } from '$lib/format';
+	import { formatTarifPrix, formatTime, rdvClientLabel } from '$lib/format';
 	import { noteIsEmpty } from '$lib/notesHtml';
 	import { userMessage } from '$lib/errors';
 	import { findHonoraireEmisForRdv } from '$lib/honoraireRdv';
@@ -310,9 +310,13 @@
 						<Sheet.Header class="gap-2 pr-12 pb-4">
 							<div class="flex items-start justify-between gap-3">
 								<Sheet.Title class="text-xl font-medium tracking-tight">
-									<a href="/clients/{rdv.client_id}" class="hover:underline">
-										{rdv.client_nom}
-									</a>
+									{#if rdv.client_id}
+										<a href="/clients/{rdv.client_id}" class="hover:underline">
+											{rdvClientLabel(rdv)}
+										</a>
+									{:else}
+										{rdvClientLabel(rdv)}
+									{/if}
 								</Sheet.Title>
 								<Badge variant={cancelled ? 'destructive' : 'secondary'} class="mt-0.5">
 									{cancelled ? 'Annulé' : 'Planifié'}
@@ -379,19 +383,21 @@
 						</div>
 					</section>
 
-					<section class="flex flex-col gap-2">
-						<p class="text-muted-foreground text-xs font-medium tracking-wide uppercase">
-							Honoraires
-						</p>
-						<Button
-							variant="outline"
-							class="w-full"
-							onclick={() => (honoraireEmis ? void ouvrirHonoraire() : (honoraireDialogOpen = true))}
-						>
-							<ReceiptIcon />
-							{honoraireEmis ? 'Ouvrir la note' : "Note d'honoraires"}
-						</Button>
-					</section>
+					{#if rdv.client_id}
+						<section class="flex flex-col gap-2">
+							<p class="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+								Honoraires
+							</p>
+							<Button
+								variant="outline"
+								class="w-full"
+								onclick={() => (honoraireEmis ? void ouvrirHonoraire() : (honoraireDialogOpen = true))}
+							>
+								<ReceiptIcon />
+								{honoraireEmis ? 'Ouvrir la note' : "Note d'honoraires"}
+							</Button>
+						</section>
+					{/if}
 
 					<section class="flex flex-col gap-2">
 						<p class="text-muted-foreground text-xs font-medium tracking-wide uppercase">
@@ -465,7 +471,7 @@
 		onClose={() => (editOpen = false)}
 		onSaved={onEditSaved}
 	/>
-	{#if rdv.statut === 'planifie'}
+	{#if rdv.statut === 'planifie' && rdv.client_id}
 		<HonoraireDialog
 			open={honoraireDialogOpen}
 			clientId={rdv.client_id}

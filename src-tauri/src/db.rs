@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS clients (
 );
 CREATE TABLE IF NOT EXISTS rdv (
   id TEXT PRIMARY KEY,
-  client_id TEXT NOT NULL REFERENCES clients(id),
+  client_id TEXT REFERENCES clients(id),
   tarif_id TEXT REFERENCES tarifs(id),
   debut TEXT NOT NULL,
   duree_minutes INTEGER NOT NULL CHECK (duree_minutes > 0),
@@ -160,6 +160,51 @@ fn add_column_if_missing(
     Ok(())
 }
 
+fn rdv_client_id_required(conn: &Connection) -> Result<bool, AppError> {
+    let mut stmt = conn.prepare("PRAGMA table_info(rdv)")?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(1)?, row.get::<_, i64>(3)?))
+    })?;
+    for row in rows {
+        let (name, notnull) = row?;
+        if name == "client_id" {
+            return Ok(notnull != 0);
+        }
+    }
+    Ok(false)
+}
+
+fn make_rdv_client_id_nullable(conn: &Connection) -> Result<(), AppError> {
+    if !rdv_client_id_required(conn)? {
+        return Ok(());
+    }
+    conn.execute("PRAGMA foreign_keys = OFF", [])?;
+    let result = conn.execute_batch(
+        r"
+        CREATE TABLE rdv_new (
+          id TEXT PRIMARY KEY,
+          client_id TEXT REFERENCES clients(id),
+          tarif_id TEXT REFERENCES tarifs(id),
+          debut TEXT NOT NULL,
+          duree_minutes INTEGER NOT NULL CHECK (duree_minutes > 0),
+          jitsi_url TEXT NOT NULL,
+          stripe_url TEXT,
+          stripe_id TEXT,
+          note TEXT,
+          statut TEXT NOT NULL CHECK (statut IN ('planifie', 'annule')),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        INSERT INTO rdv_new (id, client_id, tarif_id, debut, duree_minutes, jitsi_url, stripe_url, stripe_id, note, statut, created_at, updated_at)
+        SELECT id, client_id, tarif_id, debut, duree_minutes, jitsi_url, stripe_url, stripe_id, note, statut, created_at, updated_at FROM rdv;
+        DROP TABLE rdv;
+        ALTER TABLE rdv_new RENAME TO rdv;
+        ",
+    );
+    conn.execute("PRAGMA foreign_keys = ON", [])?;
+    result.map_err(AppError::from)
+}
+
 pub fn migrate(conn: &Connection) -> Result<(), AppError> {
     conn.execute("PRAGMA foreign_keys = ON", [])?;
     conn.execute_batch(MIGRATION)?;
@@ -167,6 +212,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
         add_column_if_missing(conn, "clients", column, ddl)?;
     }
     add_column_if_missing(conn, "tarifs", "prix_ttc", "INTEGER NOT NULL DEFAULT 1")?;
+    make_rdv_client_id_nullable(conn)?;
     Ok(())
 }
 
@@ -250,6 +296,63 @@ mod tests {
             .collect();
         assert!(names.contains(&"honoraires".to_string()));
         assert!(names.contains(&"honoraire_lignes".to_string()));
+    }
+
+    #[test]
+    fn migrate_rend_rdv_client_id_nullable() {
+        let conn = open_memory().unwrap();
+        conn.execute_batch(
+            r"
+            CREATE TABLE clients (
+              id TEXT PRIMARY KEY,
+              nom TEXT NOT NULL,
+              email TEXT,
+              telephone TEXT,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            CREATE TABLE rdv (
+              id TEXT PRIMARY KEY,
+              client_id TEXT NOT NULL REFERENCES clients(id),
+              tarif_id TEXT,
+              debut TEXT NOT NULL,
+              duree_minutes INTEGER NOT NULL,
+              jitsi_url TEXT NOT NULL,
+              stripe_url TEXT,
+              stripe_id TEXT,
+              note TEXT,
+              statut TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            INSERT INTO clients (id, nom, created_at, updated_at)
+            VALUES ('c1', 'Alice', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+            INSERT INTO rdv (id, client_id, tarif_id, debut, duree_minutes, jitsi_url, note, statut, created_at, updated_at)
+            VALUES ('r1', 'c1', NULL, '2026-09-11T10:00:00Z', 60, 'https://meet.jit.si/synapt-r1', NULL, 'planifie', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+            ",
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO rdv (id, client_id, tarif_id, debut, duree_minutes, jitsi_url, note, statut, created_at, updated_at)
+             VALUES ('r2', NULL, NULL, '2026-09-12T10:00:00Z', 60, 'https://meet.jit.si/synapt-r2', NULL, 'planifie', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM rdv", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 2);
+        let kept: String = conn
+            .query_row("SELECT client_id FROM rdv WHERE id = 'r1'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(kept, "c1");
     }
 
     #[test]

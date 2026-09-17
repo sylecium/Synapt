@@ -132,6 +132,11 @@ export function frequenceLabel(v: string): string {
 	}
 }
 
+export function rdvClientLabel(rdv: { client_nom?: string | null }): string {
+	const nom = rdv.client_nom?.trim();
+	return nom ? nom : 'Sans client';
+}
+
 export function formatDateTime(iso: string): string {
 	return new Intl.DateTimeFormat('fr-FR', { dateStyle: 'short', timeStyle: 'short' }).format(
 		new Date(iso)

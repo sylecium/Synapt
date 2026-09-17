@@ -8,6 +8,7 @@
 	import {
 		formatDateTime,
 		formatTime,
+		rdvClientLabel,
 		sameLocalDay,
 		startOfWeekMonday,
 		weekBoundsUtc
@@ -196,7 +197,7 @@
 									{prochainHoraire(prochain)}
 								</span>
 								<span class="min-w-0">
-									<span class="block truncate font-medium">{prochain.client_nom}</span>
+									<span class="block truncate font-medium">{rdvClientLabel(prochain)}</span>
 									<span class="text-muted-foreground block truncate text-sm">
 										{prochain.tarif_nom || '-'} · {prochain.duree_minutes} min
 									</span>
@@ -239,7 +240,7 @@
 											onclick={() => openPanel(rdv)}
 										>
 											<span class="w-14 font-mono tabular-nums">{formatTime(rdv.debut)}</span>
-											<span>{rdv.client_nom}</span>
+											<span>{rdvClientLabel(rdv)}</span>
 											<span class="text-muted-foreground text-sm">{rdv.tarif_nom || '-'}</span>
 										</button>
 										<Button
@@ -291,7 +292,7 @@
 										<span class="text-muted-foreground w-36 font-mono tabular-nums">
 											{formatDateTime(rdv.debut)}
 										</span>
-										<span>{rdv.client_nom}</span>
+										<span>{rdvClientLabel(rdv)}</span>
 										<span class="text-muted-foreground">{rdv.tarif_nom || '-'}</span>
 									</button>
 								{/snippet}

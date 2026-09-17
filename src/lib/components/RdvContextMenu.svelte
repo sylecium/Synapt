@@ -60,7 +60,7 @@
 	$effect(() => {
 		const id = rdv.id;
 		const clientId = rdv.client_id;
-		if (!planifie) {
+		if (!planifie || !clientId) {
 			honoraireEmis = null;
 			honoraireLoading = false;
 			return;
@@ -181,7 +181,7 @@
 		>
 			Copier le lien Stripe
 		</ContextMenu.Item>
-		{#if planifie}
+		{#if planifie && rdv.client_id}
 			<ContextMenu.Separator />
 			{#if honoraireEmis}
 				<ContextMenu.Item onSelect={ouvrirHonoraire}>Ouvrir la note</ContextMenu.Item>
@@ -205,7 +205,7 @@
 	</ContextMenu.Content>
 </ContextMenu.Root>
 
-{#if planifie}
+{#if planifie && rdv.client_id}
 	<HonoraireDialog
 		open={honoraireDialogOpen}
 		clientId={rdv.client_id}

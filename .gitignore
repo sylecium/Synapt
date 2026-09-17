@@ -12,3 +12,4 @@ AGENTS.md
 .cursor/hooks/state/
 .cursor/
 .worktrees/
+graphify-out/
