@@ -4,6 +4,7 @@
 	import LayoutDashboardIcon from '@lucide/svelte/icons/layout-dashboard';
 	import CalendarIcon from '@lucide/svelte/icons/calendar';
 	import UsersIcon from '@lucide/svelte/icons/users';
+	import ReceiptIcon from '@lucide/svelte/icons/receipt';
 	import TagIcon from '@lucide/svelte/icons/tag';
 	import StickyNoteIcon from '@lucide/svelte/icons/sticky-note';
 	import SettingsIcon from '@lucide/svelte/icons/settings';
@@ -15,6 +16,7 @@
 		{ title: 'Tableau de bord', href: '/', icon: LayoutDashboardIcon },
 		{ title: 'Agenda', href: '/agenda', icon: CalendarIcon },
 		{ title: 'Clients', href: '/clients', icon: UsersIcon },
+		{ title: 'Honoraires', href: '/honoraires', icon: ReceiptIcon },
 		{ title: 'Tarifs', href: '/tarifs', icon: TagIcon },
 		{ title: 'Notes', href: '/notes', icon: StickyNoteIcon },
 		{ title: 'Réglages', href: '/reglages', icon: SettingsIcon }

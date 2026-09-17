@@ -3,12 +3,15 @@ use std::time::Duration;
 pub mod commands;
 pub mod db;
 pub mod error;
+pub mod honoraires;
+pub mod honoraires_pdf;
 pub mod models;
 pub mod ntfy;
 pub mod overlap;
 pub mod repo;
 pub mod settings;
 pub mod stripe;
+pub mod tva;
 
 fn updater_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry, tauri_plugin_updater::Config> {
     let mut builder = tauri_plugin_updater::Builder::new();
@@ -75,6 +78,12 @@ pub fn run() {
             commands::rdv_dashboard,
             commands::stripe_ensure_link,
             commands::ntfy_test,
+            commands::honoraires_list,
+            commands::honoraires_get,
+            commands::honoraires_create,
+            commands::honoraires_ouvrir,
+            commands::honoraires_annuler,
+            commands::honoraires_rdvs_disponibles,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

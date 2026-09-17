@@ -4,7 +4,7 @@
 	import { tarifsList, tarifsSetActif, tarifsUpsert } from '$lib/api';
 	import { userMessage } from '$lib/errors';
 	import type { Tarif } from '$lib/types';
-	import { centimesToEuros, eurosToCentimes, formatCentimes } from '$lib/format';
+	import { centimesToEuros, eurosToCentimes, formatTarifPrix } from '$lib/format';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -22,6 +22,7 @@
 	let nom = $state('');
 	let dureeMinutes = $state('60');
 	let prixEuros = $state('50.00');
+	let prixTtc = $state(true);
 	let saving = $state(false);
 	let initial = $state(true);
 
@@ -40,6 +41,7 @@
 		nom = '';
 		dureeMinutes = '60';
 		prixEuros = '50.00';
+		prixTtc = true;
 		dialogOpen = true;
 	}
 
@@ -48,6 +50,7 @@
 		nom = tarif.nom;
 		dureeMinutes = String(tarif.duree_minutes);
 		prixEuros = centimesToEuros(tarif.prix_centimes);
+		prixTtc = tarif.prix_ttc;
 		dialogOpen = true;
 	}
 
@@ -58,7 +61,8 @@
 				id: editing?.id,
 				nom,
 				duree_minutes: Number.parseInt(dureeMinutes, 10),
-				prix_centimes: eurosToCentimes(prixEuros)
+				prix_centimes: eurosToCentimes(prixEuros),
+				prix_ttc: prixTtc
 			});
 			dialogOpen = false;
 			await load();
@@ -118,7 +122,7 @@
 								>
 									<Table.Cell>{tarif.nom}</Table.Cell>
 									<Table.Cell class="font-mono tabular-nums">{tarif.duree_minutes} min</Table.Cell>
-									<Table.Cell class="font-mono tabular-nums">{formatCentimes(tarif.prix_centimes)}</Table.Cell>
+									<Table.Cell class="font-mono tabular-nums">{formatTarifPrix(tarif)}</Table.Cell>
 									<Table.Cell>
 										{#if tarif.actif}
 											<Badge>Actif</Badge>
@@ -202,6 +206,17 @@
 			<div class="flex flex-col gap-2">
 				<Label for="tarif-prix">Prix (€)</Label>
 				<Input id="tarif-prix" type="number" step="0.01" min="0" bind:value={prixEuros} />
+				<label class="flex items-center gap-2 text-sm">
+					<input id="tarif-prix-ttc" type="checkbox" bind:checked={prixTtc} />
+					Prix TTC
+				</label>
+				<p class="text-muted-foreground text-xs">
+					{#if prixTtc}
+						Le montant saisi est TTC (TVA 20 % incluse).
+					{:else}
+						Le montant saisi est HT. TVA 20 % ajoutée à la facture et au paiement.
+					{/if}
+				</p>
 			</div>
 		</div>
 		<Dialog.Footer>

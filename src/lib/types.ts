@@ -15,6 +15,7 @@ export type Client = {
 	urgence_telephone: string | null;
 	orientation: ClientOrientation | null;
 	frequence: ClientFrequence | null;
+	adresse: string | null;
 	created_at: string;
 	updated_at: string;
 };
@@ -24,6 +25,7 @@ export type Tarif = {
 	nom: string;
 	duree_minutes: number;
 	prix_centimes: number;
+	prix_ttc: boolean;
 	actif: boolean;
 	created_at: string;
 	updated_at: string;
@@ -78,6 +80,13 @@ export type SettingsPublic = {
 	rappel_1h: boolean;
 	stripe_configured: boolean;
 	stripe_last4: string;
+	cabinet_nom: string;
+	cabinet_adresse: string;
+	cabinet_telephone: string;
+	cabinet_email: string;
+	cabinet_siret: string;
+	mention_tva: string;
+	prefixe_numero: string;
 };
 
 export type SettingsSetInput = {
@@ -89,4 +98,52 @@ export type SettingsSetInput = {
 	rappel_1h: boolean;
 	stripe_secret_key: string;
 	stripe_secret_clear: boolean;
+	cabinet_nom: string;
+	cabinet_adresse: string;
+	cabinet_telephone: string;
+	cabinet_email: string;
+	cabinet_siret: string;
+	mention_tva: string;
+	prefixe_numero: string;
+};
+
+export type MoyenPaiement = 'especes' | 'cheque' | 'cb' | 'stripe';
+export type HonoraireStatut = 'emise' | 'annulee';
+
+export type Honoraire = {
+	id: string;
+	numero: string;
+	client_id: string;
+	client_nom: string;
+	client_date_naissance: string | null;
+	client_adresse: string | null;
+	cabinet_nom: string;
+	cabinet_adresse: string | null;
+	cabinet_telephone: string | null;
+	cabinet_email: string | null;
+	cabinet_siret: string | null;
+	mention_tva: string;
+	moyen_paiement: MoyenPaiement;
+	statut: HonoraireStatut;
+	total_centimes: number;
+	annee: number;
+	seq: number;
+	pdf_relatif: string;
+	created_at: string;
+};
+
+export type HonoraireLigne = {
+	id: string;
+	honoraire_id: string;
+	rdv_id: string;
+	debut: string;
+	duree_minutes: number;
+	tarif_nom: string;
+	prix_centimes: number;
+	actif: boolean;
+};
+
+export type HonoraireDetail = {
+	honoraire: Honoraire;
+	lignes: HonoraireLigne[];
 };

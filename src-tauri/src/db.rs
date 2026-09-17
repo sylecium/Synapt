@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS tarifs (
   nom TEXT NOT NULL,
   duree_minutes INTEGER NOT NULL CHECK (duree_minutes > 0),
   prix_centimes INTEGER NOT NULL CHECK (prix_centimes >= 0),
+  prix_ttc INTEGER NOT NULL DEFAULT 1,
   actif INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -60,6 +61,40 @@ CREATE TABLE IF NOT EXISTS rappels_ntfy (
   etat TEXT NOT NULL CHECK (etat IN ('programme', 'annule')),
   UNIQUE (rdv_id, type)
 );
+CREATE TABLE IF NOT EXISTS honoraires (
+  id TEXT PRIMARY KEY,
+  numero TEXT NOT NULL UNIQUE,
+  client_id TEXT NOT NULL REFERENCES clients(id),
+  client_nom TEXT NOT NULL,
+  client_date_naissance TEXT,
+  client_adresse TEXT,
+  cabinet_nom TEXT NOT NULL,
+  cabinet_adresse TEXT,
+  cabinet_telephone TEXT,
+  cabinet_email TEXT,
+  cabinet_siret TEXT,
+  mention_tva TEXT NOT NULL,
+  moyen_paiement TEXT NOT NULL CHECK (moyen_paiement IN ('especes', 'cheque', 'cb', 'stripe')),
+  statut TEXT NOT NULL CHECK (statut IN ('emise', 'annulee')),
+  total_centimes INTEGER NOT NULL CHECK (total_centimes >= 0),
+  annee INTEGER NOT NULL,
+  seq INTEGER NOT NULL,
+  pdf_relatif TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (annee, seq)
+);
+CREATE TABLE IF NOT EXISTS honoraire_lignes (
+  id TEXT PRIMARY KEY,
+  honoraire_id TEXT NOT NULL REFERENCES honoraires(id),
+  rdv_id TEXT NOT NULL REFERENCES rdv(id),
+  debut TEXT NOT NULL,
+  duree_minutes INTEGER NOT NULL,
+  tarif_nom TEXT NOT NULL,
+  prix_centimes INTEGER NOT NULL,
+  actif INTEGER NOT NULL DEFAULT 1
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_honoraire_lignes_rdv_actif
+  ON honoraire_lignes(rdv_id) WHERE actif = 1;
 ";
 
 fn configure_connection(conn: &Connection) -> Result<(), AppError> {
@@ -97,6 +132,7 @@ const CLIENT_ALTERS: &[(&str, &str)] = &[
     ("urgence_telephone", "TEXT"),
     ("orientation", "TEXT"),
     ("frequence", "TEXT"),
+    ("adresse", "TEXT"),
 ];
 
 fn table_columns(conn: &Connection, table: &str) -> Result<Vec<String>, AppError> {
@@ -130,6 +166,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
     for (column, ddl) in CLIENT_ALTERS {
         add_column_if_missing(conn, "clients", column, ddl)?;
     }
+    add_column_if_missing(conn, "tarifs", "prix_ttc", "INTEGER NOT NULL DEFAULT 1")?;
     Ok(())
 }
 
@@ -194,5 +231,45 @@ mod tests {
             })
             .unwrap();
         assert_eq!(statut, "en_cours");
+    }
+
+    #[test]
+    fn migrate_creates_honoraires_and_client_adresse() {
+        let conn = open_memory().unwrap();
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap();
+        let cols = table_columns(&conn, "clients").unwrap();
+        assert!(cols.contains(&"adresse".to_string()));
+        let mut stmt = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+            .unwrap();
+        let names: Vec<String> = stmt
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+        assert!(names.contains(&"honoraires".to_string()));
+        assert!(names.contains(&"honoraire_lignes".to_string()));
+    }
+
+    #[test]
+    fn migrate_adds_adresse_on_old_clients() {
+        let conn = open_memory().unwrap();
+        conn.execute_batch(
+            r"
+            CREATE TABLE clients (
+              id TEXT PRIMARY KEY,
+              nom TEXT NOT NULL,
+              email TEXT,
+              telephone TEXT,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            ",
+        )
+        .unwrap();
+        migrate(&conn).unwrap();
+        let cols = table_columns(&conn, "clients").unwrap();
+        assert!(cols.contains(&"adresse".to_string()));
     }
 }

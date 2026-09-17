@@ -6,10 +6,52 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
 
+pub fn mention_tva_defaut() -> &'static str {
+    "TVA au taux normal de 20 % (CGI, art. 278)"
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CabinetSettings {
+    #[serde(default)]
+    pub nom: String,
+    #[serde(default)]
+    pub adresse: String,
+    #[serde(default)]
+    pub telephone: String,
+    #[serde(default)]
+    pub email: String,
+    #[serde(default)]
+    pub siret: String,
+    #[serde(default = "default_mention_tva")]
+    pub mention_tva: String,
+    #[serde(default)]
+    pub prefixe_numero: String,
+}
+
+fn default_mention_tva() -> String {
+    mention_tva_defaut().to_string()
+}
+
+impl Default for CabinetSettings {
+    fn default() -> Self {
+        Self {
+            nom: String::new(),
+            adresse: String::new(),
+            telephone: String::new(),
+            email: String::new(),
+            siret: String::new(),
+            mention_tva: default_mention_tva(),
+            prefixe_numero: String::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Settings {
     pub ntfy: NtfySettings,
     pub stripe: StripeSettings,
+    #[serde(default)]
+    pub cabinet: CabinetSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -36,6 +78,13 @@ pub struct SettingsPublic {
     pub rappel_1h: bool,
     pub stripe_configured: bool,
     pub stripe_last4: String,
+    pub cabinet_nom: String,
+    pub cabinet_adresse: String,
+    pub cabinet_telephone: String,
+    pub cabinet_email: String,
+    pub cabinet_siret: String,
+    pub mention_tva: String,
+    pub prefixe_numero: String,
 }
 
 impl Default for Settings {
@@ -51,6 +100,7 @@ impl Default for Settings {
             stripe: StripeSettings {
                 secret_key: String::new(),
             },
+            cabinet: CabinetSettings::default(),
         }
     }
 }
@@ -68,6 +118,13 @@ impl Settings {
             rappel_1h: self.ntfy.rappel_1h,
             stripe_configured,
             stripe_last4,
+            cabinet_nom: self.cabinet.nom.clone(),
+            cabinet_adresse: self.cabinet.adresse.clone(),
+            cabinet_telephone: self.cabinet.telephone.clone(),
+            cabinet_email: self.cabinet.email.clone(),
+            cabinet_siret: self.cabinet.siret.clone(),
+            mention_tva: self.cabinet.mention_tva.clone(),
+            prefixe_numero: self.cabinet.prefixe_numero.clone(),
         }
     }
 }

@@ -1,4 +1,15 @@
-import type { ClientFrequence, ClientOrientation, ClientStatut } from './types';
+import type { ClientFrequence, ClientOrientation, ClientStatut, MoyenPaiement } from './types';
+
+export const MOYEN_PAIEMENT_LABELS: Record<MoyenPaiement, string> = {
+	especes: 'Espèces',
+	cheque: 'Chèque',
+	cb: 'Carte',
+	stripe: 'Stripe'
+};
+
+export function moyenPaiementLabel(m: MoyenPaiement): string {
+	return MOYEN_PAIEMENT_LABELS[m];
+}
 
 export function formatTime(iso: string): string {
 	return new Intl.DateTimeFormat('fr-FR', { timeStyle: 'short' }).format(new Date(iso));
@@ -64,6 +75,10 @@ export function formatCentimes(centimes: number): string {
 	return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(
 		centimes / 100
 	);
+}
+
+export function formatTarifPrix(tarif: { prix_centimes: number; prix_ttc: boolean }): string {
+	return `${formatCentimes(tarif.prix_centimes)} ${tarif.prix_ttc ? 'TTC' : 'HT'}`;
 }
 
 export const CLIENT_STATUT_LABELS: Record<ClientStatut, string> = {

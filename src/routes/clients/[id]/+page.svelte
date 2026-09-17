@@ -2,11 +2,14 @@
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
+	import { openPath } from '@tauri-apps/plugin-opener';
 	import Trash2Icon from '@lucide/svelte/icons/trash-2';
 	import {
 		clientsDelete,
 		clientsGet,
 		clientsUpsert,
+		honorairesList,
+		honorairesOuvrir,
 		notesDelete,
 		notesList,
 		notesUpsert,
@@ -14,18 +17,21 @@
 		tarifsList
 	} from '$lib/api';
 	import { userMessage } from '$lib/errors';
-	import type { Client, ClientStatut, Note, Rdv, Tarif } from '$lib/types';
-	import { formatDateTime, formatNoteListDate } from '$lib/format';
+	import type { Client, ClientStatut, Honoraire, HonoraireDetail, HonoraireStatut, Note, Rdv, Tarif } from '$lib/types';
+	import { formatCentimes, formatDateTime, formatNoteListDate } from '$lib/format';
 	import { rdvBornes } from '$lib/rdvBornes';
 	import { noteTitle } from '$lib/notesHtml';
 	import { createDebouncedNoteSave } from '$lib/debouncedNoteSave';
 	import ClientForm from '$lib/components/ClientForm.svelte';
+	import HonoraireContextMenu from '$lib/components/HonoraireContextMenu.svelte';
+	import HonoraireDialog from '$lib/components/HonoraireDialog.svelte';
 	import NoteEditor from '$lib/components/NoteEditor.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import RdvContextMenu from '$lib/components/RdvContextMenu.svelte';
 	import RdvDialog from '$lib/components/RdvDialog.svelte';
 	import RdvPanel from '$lib/components/RdvPanel.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
 	import * as ContextMenu from '$lib/components/ui/context-menu/index.js';
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
@@ -45,8 +51,10 @@
 	let urgenceTelephone = $state('');
 	let orientation = $state('');
 	let frequence = $state('');
+	let adresse = $state('');
 	let tarifs = $state<Tarif[]>([]);
 	let notes = $state<Note[]>([]);
+	let honoraires = $state<Honoraire[]>([]);
 	let rdvs = $state<Rdv[]>([]);
 	let saving = $state(false);
 	let initial = $state(true);
@@ -57,6 +65,7 @@
 	let editingId = $state<string | null>(null);
 	let deleteOpen = $state(false);
 	let deleting = $state(false);
+	let honoraireDialogOpen = $state(false);
 
 	const bornes = $derived(rdvBornes(rdvs));
 
@@ -97,15 +106,18 @@
 			urgenceTelephone = c.urgence_telephone ?? '';
 			orientation = c.orientation ?? '';
 			frequence = c.frequence ?? '';
-			const [n, r, t] = await Promise.all([
+			adresse = c.adresse ?? '';
+			const [n, r, t, h] = await Promise.all([
 				notesList({ client_id: id }),
 				rdvList({ client_id: id }),
-				tarifsList()
+				tarifsList(),
+				honorairesList(id)
 			]);
 			if (isCancelled()) return;
 			notes = n;
 			rdvs = r;
 			tarifs = t;
+			honoraires = h;
 			if (editingId && !n.some((note) => note.id === editingId)) {
 				editingId = n[0]?.id ?? null;
 			}
@@ -132,7 +144,8 @@
 				urgence_nom: urgenceNom.trim() || null,
 				urgence_telephone: urgenceTelephone.trim() || null,
 				orientation: orientation || null,
-				frequence: frequence || null
+				frequence: frequence || null,
+				adresse: adresse.trim() || null
 			});
 			toast.success('Client enregistré');
 		} catch (e) {
@@ -193,6 +206,46 @@
 		load(clientId);
 	}
 
+	function honoraireStatutLabel(statut: HonoraireStatut): string {
+		switch (statut) {
+			case 'emise':
+				return 'Émise';
+			case 'annulee':
+				return 'Annulée';
+			default: {
+				const _n: never = statut;
+				return _n;
+			}
+		}
+	}
+
+	function honoraireStatutBadge(statut: HonoraireStatut): 'default' | 'outline' {
+		switch (statut) {
+			case 'emise':
+				return 'default';
+			case 'annulee':
+				return 'outline';
+			default: {
+				const _n: never = statut;
+				return _n;
+			}
+		}
+	}
+
+	async function ouvrirHonoraire(id: string) {
+		try {
+			const path = await honorairesOuvrir(id);
+			await openPath(path);
+		} catch (e) {
+			toast.error(userMessage(e));
+		}
+	}
+
+	function onHonoraireSaved(_detail: HonoraireDetail) {
+		honoraireDialogOpen = false;
+		load(clientId);
+	}
+
 	async function confirmDelete() {
 		deleting = true;
 		try {
@@ -246,6 +299,7 @@
 				bind:urgenceTelephone
 				bind:orientation
 				bind:frequence
+				bind:adresse
 			/>
 			<Button onclick={saveClient} disabled={saving}>Enregistrer</Button>
 		</section>
@@ -323,6 +377,57 @@
 		</section>
 
 		<section class="flex flex-col gap-4">
+			<div class="flex items-center justify-between gap-2">
+				<h2 class="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+					Notes d'honoraires
+				</h2>
+				<Button variant="outline" size="sm" onclick={() => (honoraireDialogOpen = true)}>
+					Regrouper
+				</Button>
+			</div>
+			{#if honoraires.length === 0}
+				<p class="text-muted-foreground text-sm">Aucune note d'honoraires pour ce client.</p>
+			{:else}
+				<Table.Root>
+					<Table.Header>
+						<Table.Row>
+							<Table.Head>Numéro</Table.Head>
+							<Table.Head>Date</Table.Head>
+							<Table.Head>Total</Table.Head>
+							<Table.Head>Statut</Table.Head>
+						</Table.Row>
+					</Table.Header>
+					<Table.Body>
+						{#each honoraires as h (h.id)}
+							<HonoraireContextMenu honoraire={h} onUpdated={() => load(clientId)}>
+								{#snippet children(props)}
+									<Table.Row
+										{...props}
+										class="hover:bg-muted/50 cursor-pointer"
+										onclick={() => ouvrirHonoraire(h.id)}
+									>
+										<Table.Cell class="font-mono tabular-nums">{h.numero}</Table.Cell>
+										<Table.Cell class="font-mono tabular-nums text-sm">
+											{formatDateTime(h.created_at)}
+										</Table.Cell>
+										<Table.Cell class="font-mono tabular-nums">
+											{formatCentimes(h.total_centimes)}
+										</Table.Cell>
+										<Table.Cell>
+											<Badge variant={honoraireStatutBadge(h.statut)}>
+												{honoraireStatutLabel(h.statut)}
+											</Badge>
+										</Table.Cell>
+									</Table.Row>
+								{/snippet}
+							</HonoraireContextMenu>
+						{/each}
+					</Table.Body>
+				</Table.Root>
+			{/if}
+		</section>
+
+		<section class="flex flex-col gap-4">
 			<h2 class="text-muted-foreground text-xs font-medium tracking-wide uppercase">
 				Historique RDV
 			</h2>
@@ -379,6 +484,13 @@
 		panelRdvId = null;
 	}}
 	onUpdated={() => load(clientId)}
+/>
+
+<HonoraireDialog
+	bind:open={honoraireDialogOpen}
+	clientId={clientId}
+	onClose={() => (honoraireDialogOpen = false)}
+	onSaved={onHonoraireSaved}
 />
 
 <Dialog.Root bind:open={deleteOpen}>

@@ -29,7 +29,7 @@ JOIN clients ON clients.id = rdv.client_id \
 LEFT JOIN tarifs ON tarifs.id = rdv.tarif_id";
 
 const CLIENT_SELECT: &str = "SELECT id, nom, email, telephone, statut, memo, tarif_id,
-    date_naissance, urgence_nom, urgence_telephone, orientation, frequence,
+    date_naissance, urgence_nom, urgence_telephone, orientation, frequence, adresse,
     created_at, updated_at FROM clients";
 
 fn row_to_client(row: &Row<'_>) -> Result<Client, rusqlite::Error> {
@@ -46,6 +46,7 @@ fn row_to_client(row: &Row<'_>) -> Result<Client, rusqlite::Error> {
         urgence_telephone: row.get("urgence_telephone")?,
         orientation: row.get("orientation")?,
         frequence: row.get("frequence")?,
+        adresse: row.get("adresse")?,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
     })
@@ -57,6 +58,7 @@ fn row_to_tarif(row: &Row<'_>) -> Result<Tarif, rusqlite::Error> {
         nom: row.get("nom")?,
         duree_minutes: row.get("duree_minutes")?,
         prix_centimes: row.get("prix_centimes")?,
+        prix_ttc: row.get::<_, i64>("prix_ttc")? != 0,
         actif: row.get::<_, i64>("actif")? != 0,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
@@ -244,6 +246,7 @@ pub fn clients_upsert(conn: &Connection, write: ClientWrite) -> Result<Client, A
         &["hebdo", "bimensuel", "a_la_demande"],
         "Fréquence inconnue.",
     )?;
+    let adresse = trim_opt(write.adresse);
 
     let now = now_iso();
     let id = match write.id {
@@ -261,7 +264,7 @@ pub fn clients_upsert(conn: &Connection, write: ClientWrite) -> Result<Client, A
         conn.execute(
             "UPDATE clients SET nom = ?1, email = ?2, telephone = ?3, statut = ?4, memo = ?5,
              tarif_id = ?6, date_naissance = ?7, urgence_nom = ?8, urgence_telephone = ?9,
-             orientation = ?10, frequence = ?11, updated_at = ?12 WHERE id = ?13",
+             orientation = ?10, frequence = ?11, adresse = ?12, updated_at = ?13 WHERE id = ?14",
             params![
                 nom,
                 email,
@@ -274,6 +277,7 @@ pub fn clients_upsert(conn: &Connection, write: ClientWrite) -> Result<Client, A
                 urgence_telephone,
                 orientation,
                 frequence,
+                adresse,
                 now,
                 id
             ],
@@ -282,8 +286,8 @@ pub fn clients_upsert(conn: &Connection, write: ClientWrite) -> Result<Client, A
         conn.execute(
             "INSERT INTO clients (
                id, nom, email, telephone, statut, memo, tarif_id, date_naissance,
-               urgence_nom, urgence_telephone, orientation, frequence, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)",
+               urgence_nom, urgence_telephone, orientation, frequence, adresse, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14)",
             params![
                 id,
                 nom,
@@ -297,6 +301,7 @@ pub fn clients_upsert(conn: &Connection, write: ClientWrite) -> Result<Client, A
                 urgence_telephone,
                 orientation,
                 frequence,
+                adresse,
                 now
             ],
         )?;
@@ -341,6 +346,14 @@ pub fn clients_delete(conn: &Connection, id: &str) -> Result<(), AppError> {
             "Ce client a encore des rendez-vous prévus. Annule-les avant de supprimer la fiche.",
         ));
     }
+    let honoraires: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM honoraires WHERE client_id = ?1",
+        params![id],
+        |row| row.get(0),
+    )?;
+    if honoraires > 0 {
+        return Err(AppError::new("Ce client a encore des notes d'honoraires."));
+    }
 
     let tx = conn.unchecked_transaction()?;
     tx.execute(
@@ -360,6 +373,7 @@ pub fn clients_delete(conn: &Connection, id: &str) -> Result<(), AppError> {
         nom: &str,
         duree_minutes: i64,
         prix_centimes: i64,
+        prix_ttc: bool,
     ) -> Result<Tarif, AppError> {
         ensure_migrated(conn)?;
         if nom.trim().is_empty() {
@@ -384,24 +398,25 @@ pub fn clients_delete(conn: &Connection, id: &str) -> Result<(), AppError> {
         |row| row.get(0),
     )?;
 
+    let prix_ttc_int = i64::from(prix_ttc);
     if exists {
         conn.execute(
-        "UPDATE tarifs SET nom = ?1, duree_minutes = ?2, prix_centimes = ?3, updated_at = ?4 WHERE id = ?5",
-        params![nom, duree_minutes, prix_centimes, now, id],
+        "UPDATE tarifs SET nom = ?1, duree_minutes = ?2, prix_centimes = ?3, prix_ttc = ?4, updated_at = ?5 WHERE id = ?6",
+        params![nom, duree_minutes, prix_centimes, prix_ttc_int, now, id],
     )?;
     } else {
         conn.execute(
-        "INSERT INTO tarifs (id, nom, duree_minutes, prix_centimes, actif, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5)",
-        params![id, nom, duree_minutes, prix_centimes, now],
+        "INSERT INTO tarifs (id, nom, duree_minutes, prix_centimes, prix_ttc, actif, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?6)",
+        params![id, nom, duree_minutes, prix_centimes, prix_ttc_int, now],
     )?;
     }
 
     tarifs_get(conn, &id)
 }
 
-fn tarifs_get(conn: &Connection, id: &str) -> Result<Tarif, AppError> {
+pub(crate) fn tarifs_get(conn: &Connection, id: &str) -> Result<Tarif, AppError> {
     let mut stmt = conn.prepare(
-    "SELECT id, nom, duree_minutes, prix_centimes, actif, created_at, updated_at FROM tarifs WHERE id = ?1",
+    "SELECT id, nom, duree_minutes, prix_centimes, prix_ttc, actif, created_at, updated_at FROM tarifs WHERE id = ?1",
 )?;
     let tarif = stmt.query_row(params![id], row_to_tarif)?;
     Ok(tarif)
@@ -410,7 +425,7 @@ fn tarifs_get(conn: &Connection, id: &str) -> Result<Tarif, AppError> {
 pub fn tarifs_list(conn: &Connection) -> Result<Vec<Tarif>, AppError> {
     ensure_migrated(conn)?;
     let mut stmt = conn.prepare(
-    "SELECT id, nom, duree_minutes, prix_centimes, actif, created_at, updated_at FROM tarifs ORDER BY nom",
+    "SELECT id, nom, duree_minutes, prix_centimes, prix_ttc, actif, created_at, updated_at FROM tarifs ORDER BY nom",
 )?;
     let tarifs = stmt
         .query_map([], row_to_tarif)?
@@ -760,4 +775,60 @@ pub fn rdv_dashboard(conn: &Connection, now: DateTime<Utc>) -> Result<Dashboard,
         aujourdhui,
         a_venir,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::open_memory;
+
+    #[test]
+    fn clients_upsert_roundtrip_adresse() {
+        let conn = open_memory().unwrap();
+        migrate(&conn).unwrap();
+        let c = clients_upsert(
+            &conn,
+            ClientWrite {
+                nom: "Bob".into(),
+                adresse: Some("1 rue A".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(c.adresse.as_deref(), Some("1 rue A"));
+        let again = clients_get(&conn, &c.id).unwrap();
+        assert_eq!(again.adresse.as_deref(), Some("1 rue A"));
+    }
+
+    #[test]
+    fn clients_delete_refuse_si_honoraire() {
+        use crate::honoraires::honoraires_create;
+        use crate::settings::CabinetSettings;
+        use std::path::PathBuf;
+
+        let conn = open_memory().unwrap();
+        migrate(&conn).unwrap();
+        let client = clients_upsert(
+            &conn,
+            ClientWrite {
+                nom: "Alice".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let rdv = rdv_create(&conn, &client.id, None, "2026-09-11T10:00:00Z", 60, None).unwrap();
+        let dir = PathBuf::from(std::env::temp_dir()).join(format!(
+            "synapt-hon-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(dir.join("honoraires")).unwrap();
+        let cabinet = CabinetSettings {
+            nom: "Cabinet Test".into(),
+            ..Default::default()
+        };
+        honoraires_create(&conn, &cabinet, &[rdv.id.clone()], "especes", &dir).unwrap();
+        rdv_annuler(&conn, &rdv.id).unwrap();
+        let err = clients_delete(&conn, &client.id).unwrap_err();
+        assert_eq!(err.message, "Ce client a encore des notes d'honoraires.");
+    }
 }

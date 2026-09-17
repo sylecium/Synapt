@@ -14,6 +14,7 @@ pub struct Client {
     pub urgence_telephone: Option<String>,
     pub orientation: Option<String>,
     pub frequence: Option<String>,
+    pub adresse: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -32,6 +33,7 @@ pub struct ClientWrite {
     pub urgence_telephone: Option<String>,
     pub orientation: Option<String>,
     pub frequence: Option<String>,
+    pub adresse: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,6 +42,7 @@ pub struct Tarif {
     pub nom: String,
     pub duree_minutes: i64,
     pub prix_centimes: i64,
+    pub prix_ttc: bool,
     pub actif: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -93,4 +96,45 @@ pub struct RappelNtfy {
 pub struct RdvDetail {
     pub rdv: Rdv,
     pub rappels: Vec<RappelNtfy>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Honoraire {
+    pub id: String,
+    pub numero: String,
+    pub client_id: String,
+    pub client_nom: String,
+    pub client_date_naissance: Option<String>,
+    pub client_adresse: Option<String>,
+    pub cabinet_nom: String,
+    pub cabinet_adresse: Option<String>,
+    pub cabinet_telephone: Option<String>,
+    pub cabinet_email: Option<String>,
+    pub cabinet_siret: Option<String>,
+    pub mention_tva: String,
+    pub moyen_paiement: String,
+    pub statut: String,
+    pub total_centimes: i64,
+    pub annee: i32,
+    pub seq: i32,
+    pub pdf_relatif: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HonoraireLigne {
+    pub id: String,
+    pub honoraire_id: String,
+    pub rdv_id: String,
+    pub debut: String,
+    pub duree_minutes: i64,
+    pub tarif_nom: String,
+    pub prix_centimes: i64,
+    pub actif: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HonoraireDetail {
+    pub honoraire: Honoraire,
+    pub lignes: Vec<HonoraireLigne>,
 }

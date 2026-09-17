@@ -4,11 +4,14 @@
 	import CopyIcon from '@lucide/svelte/icons/copy';
 	import VideoIcon from '@lucide/svelte/icons/video';
 	import BanknoteIcon from '@lucide/svelte/icons/banknote';
-	import { rdvGet, rdvSetNote, settingsGet, tarifsList } from '$lib/api';
-	import type { RappelNtfy, Rdv, RdvDetail, SettingsPublic, Tarif } from '$lib/types';
-	import { formatCentimes, formatTime } from '$lib/format';
+	import ReceiptIcon from '@lucide/svelte/icons/receipt';
+	import { openPath } from '@tauri-apps/plugin-opener';
+	import { honorairesOuvrir, rdvGet, rdvSetNote, settingsGet, tarifsList } from '$lib/api';
+	import type { Honoraire, RappelNtfy, Rdv, RdvDetail, SettingsPublic, Tarif } from '$lib/types';
+	import { formatTarifPrix, formatTime } from '$lib/format';
 	import { noteIsEmpty } from '$lib/notesHtml';
 	import { userMessage } from '$lib/errors';
+	import { findHonoraireEmisForRdv } from '$lib/honoraireRdv';
 	import {
 		cancelRdv as cancelRdvAction,
 		copyJitsi,
@@ -20,6 +23,7 @@
 	import NoteEditor from '$lib/components/NoteEditor.svelte';
 	import NoteHtml from '$lib/components/NoteHtml.svelte';
 	import RdvContextMenu from '$lib/components/RdvContextMenu.svelte';
+	import HonoraireDialog from '$lib/components/HonoraireDialog.svelte';
 	import RdvDialog from '$lib/components/RdvDialog.svelte';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -40,6 +44,8 @@
 	let tarifs = $state<Tarif[]>([]);
 	let loading = $state(false);
 	let editOpen = $state(false);
+	let honoraireDialogOpen = $state(false);
+	let honoraireEmis = $state<Honoraire | null>(null);
 	let cancelling = $state(false);
 	let stripeBusy = $state(false);
 	let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -109,12 +115,30 @@
 		return formatTime(d.toISOString());
 	}
 
+	async function loadHonoraireEmis(forRdv: Rdv, gen: number) {
+		if (forRdv.statut !== 'planifie') {
+			if (gen === panelGen) honoraireEmis = null;
+			return;
+		}
+		try {
+			const found = await findHonoraireEmisForRdv(forRdv.client_id, forRdv.id);
+			if (gen !== panelGen) return;
+			honoraireEmis = found;
+		} catch (e) {
+			if (gen !== panelGen) return;
+			toast.error(userMessage(e));
+			honoraireEmis = null;
+		}
+	}
+
 	async function loadDetail(id: string, gen: number) {
 		loading = true;
+		honoraireEmis = null;
 		try {
 			const next = await rdvGet(id);
 			if (gen !== panelGen) return;
 			detail = next;
+			void loadHonoraireEmis(next.rdv, gen);
 		} catch (e) {
 			if (gen !== panelGen) return;
 			toast.error(userMessage(e));
@@ -238,6 +262,22 @@
 		if (rdvId) void loadDetail(rdvId, panelGen);
 		onUpdated();
 	}
+
+	async function ouvrirHonoraire() {
+		if (!honoraireEmis) return;
+		try {
+			const path = await honorairesOuvrir(honoraireEmis.id);
+			await openPath(path);
+		} catch (e) {
+			toast.error(userMessage(e));
+		}
+	}
+
+	function onHonoraireSaved() {
+		honoraireDialogOpen = false;
+		if (rdv) void loadHonoraireEmis(rdv, panelGen);
+		onUpdated();
+	}
 </script>
 
 <Sheet.Root open={open} onOpenChange={handleOpenChange}>
@@ -295,7 +335,7 @@
 							<span> · {rdv.tarif_nom}</span>
 						{/if}
 						{#if tarif && tarif.prix_centimes > 0}
-							<span> · {formatCentimes(tarif.prix_centimes)}</span>
+							<span> · {formatTarifPrix(tarif)}</span>
 						{/if}
 					</p>
 				</div>
@@ -337,6 +377,20 @@
 								Copier
 							</Button>
 						</div>
+					</section>
+
+					<section class="flex flex-col gap-2">
+						<p class="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+							Honoraires
+						</p>
+						<Button
+							variant="outline"
+							class="w-full"
+							onclick={() => (honoraireEmis ? void ouvrirHonoraire() : (honoraireDialogOpen = true))}
+						>
+							<ReceiptIcon />
+							{honoraireEmis ? 'Ouvrir la note' : "Note d'honoraires"}
+						</Button>
 					</section>
 
 					<section class="flex flex-col gap-2">
@@ -411,4 +465,13 @@
 		onClose={() => (editOpen = false)}
 		onSaved={onEditSaved}
 	/>
+	{#if rdv.statut === 'planifie'}
+		<HonoraireDialog
+			open={honoraireDialogOpen}
+			clientId={rdv.client_id}
+			rdvIds={[rdv.id]}
+			onClose={() => (honoraireDialogOpen = false)}
+			onSaved={onHonoraireSaved}
+		/>
+	{/if}
 {/if}

@@ -36,6 +36,7 @@
 	let urgenceTelephone = $state('');
 	let orientation = $state('');
 	let frequence = $state('');
+	let adresse = $state('');
 	let saving = $state(false);
 	let initial = $state(true);
 	let rdvDialogOpen = $state(false);
@@ -74,6 +75,7 @@
 		urgenceTelephone = '';
 		orientation = '';
 		frequence = '';
+		adresse = '';
 	}
 
 	function openCreate() {
@@ -114,7 +116,8 @@
 				urgence_nom: urgenceNom.trim() || null,
 				urgence_telephone: urgenceTelephone.trim() || null,
 				orientation: orientation || null,
-				frequence: frequence || null
+				frequence: frequence || null,
+				adresse: adresse.trim() || null
 			});
 			dialogOpen = false;
 			await load();
@@ -247,6 +250,7 @@
 				bind:urgenceTelephone
 				bind:orientation
 				bind:frequence
+				bind:adresse
 			/>
 		</div>
 		<Dialog.Footer>

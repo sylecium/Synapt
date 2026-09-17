@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 use chrono::{DateTime, Utc};
@@ -7,7 +8,9 @@ use uuid::Uuid;
 
 use crate::db::{db_path, migrate, open_file};
 use crate::error::AppError;
-use crate::models::{Client, ClientWrite, Dashboard, Note, Rdv, RdvDetail, Tarif};
+use crate::models::{
+    Client, ClientWrite, Dashboard, Honoraire, HonoraireDetail, Note, Rdv, RdvDetail, Tarif,
+};
 use crate::ntfy::{echeance, ntfy_delete, should_publish, NtfyClient, RappelKind, ReqwestNtfy};
 use crate::repo::{self, ensure_migrated, fetch_rdv, list_rdvs_planifies, now_iso};
 use crate::settings::{load_settings, save_settings, Settings, SettingsPublic};
@@ -31,6 +34,13 @@ pub struct SettingsSetInput {
     pub stripe_secret_key: String,
     pub ntfy_token_clear: bool,
     pub stripe_secret_clear: bool,
+    pub cabinet_nom: String,
+    pub cabinet_adresse: String,
+    pub cabinet_telephone: String,
+    pub cabinet_email: String,
+    pub cabinet_siret: String,
+    pub mention_tva: String,
+    pub prefixe_numero: String,
 }
 
 fn with_db<F, T>(f: F) -> Result<T, AppError>
@@ -54,21 +64,7 @@ fn fetch_client_nom(conn: &Connection, client_id: &str) -> Result<String, AppErr
 }
 
 fn fetch_tarif(conn: &Connection, tarif_id: &str) -> Result<Tarif, AppError> {
-    let mut stmt = conn.prepare(
-        "SELECT id, nom, duree_minutes, prix_centimes, actif, created_at, updated_at FROM tarifs WHERE id = ?1",
-    )?;
-    stmt.query_row(params![tarif_id], |row| {
-        Ok(Tarif {
-            id: row.get(0)?,
-            nom: row.get(1)?,
-            duree_minutes: row.get(2)?,
-            prix_centimes: row.get(3)?,
-            actif: row.get::<_, i64>(4)? != 0,
-            created_at: row.get(5)?,
-            updated_at: row.get(6)?,
-        })
-    })
-    .map_err(|_| AppError::new("tarif introuvable"))
+    repo::tarifs_get(conn, tarif_id).map_err(|_| AppError::new("tarif introuvable"))
 }
 
 fn rappel_deja_programme(
@@ -321,7 +317,7 @@ fn stripe_tarif_data(
         if tarif.prix_centimes > 0 {
             return Ok(Some(StripeTarifData {
                 nom: tarif.nom,
-                prix_centimes: tarif.prix_centimes,
+                prix_centimes: crate::tva::montant_ttc(tarif.prix_centimes, tarif.prix_ttc),
             }));
         }
     }
@@ -409,6 +405,15 @@ pub fn settings_apply(input: &SettingsSetInput, current: &Settings) -> Settings 
             rappel_1h: input.rappel_1h,
         },
         stripe: crate::settings::StripeSettings { secret_key },
+        cabinet: crate::settings::CabinetSettings {
+            nom: input.cabinet_nom.clone(),
+            adresse: input.cabinet_adresse.clone(),
+            telephone: input.cabinet_telephone.clone(),
+            email: input.cabinet_email.clone(),
+            siret: input.cabinet_siret.clone(),
+            mention_tva: input.mention_tva.clone(),
+            prefixe_numero: input.prefixe_numero.clone(),
+        },
     }
 }
 
@@ -422,6 +427,12 @@ pub fn settings_get() -> SettingsPublic {
 #[tauri::command(rename_all = "snake_case")]
 pub fn settings_set(input: SettingsSetInput) -> Result<(), String> {
     let current = load_settings();
+    let prefixe_numero =
+        crate::honoraires::sanitize_prefixe(&input.prefixe_numero).map_err(|e| e.message)?;
+    let input = SettingsSetInput {
+        prefixe_numero,
+        ..input
+    };
     let updated = settings_apply(&input, &current);
     save_settings(&updated).map_err(|e| e.message)
 }
@@ -464,6 +475,7 @@ pub fn clients_upsert(
     urgence_telephone: Option<String>,
     orientation: Option<String>,
     frequence: Option<String>,
+    adresse: Option<String>,
 ) -> Result<Client, String> {
     with_db(|conn| {
         repo::clients_upsert(
@@ -481,6 +493,7 @@ pub fn clients_upsert(
                 urgence_telephone,
                 orientation,
                 frequence,
+                adresse,
             },
         )
     })
@@ -498,9 +511,19 @@ pub fn tarifs_upsert(
     nom: String,
     duree_minutes: i64,
     prix_centimes: i64,
+    prix_ttc: bool,
 ) -> Result<Tarif, String> {
-    with_db(|conn| repo::tarifs_upsert(conn, id.as_deref(), &nom, duree_minutes, prix_centimes))
-        .map_err(|e| e.message)
+    with_db(|conn| {
+        repo::tarifs_upsert(
+            conn,
+            id.as_deref(),
+            &nom,
+            duree_minutes,
+            prix_centimes,
+            prix_ttc,
+        )
+    })
+    .map_err(|e| e.message)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -665,6 +688,62 @@ pub async fn ntfy_test() -> Result<(), String> {
         .map_err(|e| e.message)
 }
 
+fn pdf_root() -> Result<PathBuf, AppError> {
+    let home = dirs::home_dir().ok_or_else(|| {
+        AppError::new("Impossible d'enregistrer le PDF dans le dossier Synapt.")
+    })?;
+    Ok(home.join("Synapt"))
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn honoraires_list(client_id: Option<String>) -> Result<Vec<Honoraire>, String> {
+    with_db(|conn| {
+        crate::honoraires::honoraires_list(conn, client_id.as_deref())
+    })
+    .map_err(|e| e.message)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn honoraires_get(id: String) -> Result<HonoraireDetail, String> {
+    with_db(|conn| crate::honoraires::honoraires_get(conn, &id)).map_err(|e| e.message)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn honoraires_create(
+    rdv_ids: Vec<String>,
+    moyen_paiement: String,
+) -> Result<HonoraireDetail, String> {
+    let cabinet = load_settings().cabinet;
+    let root = pdf_root().map_err(|e| e.message)?;
+    with_db(|conn| {
+        crate::honoraires::honoraires_create(conn, &cabinet, &rdv_ids, &moyen_paiement, &root)
+    })
+    .map_err(|e| e.message)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn honoraires_ouvrir(id: String) -> Result<String, String> {
+    let root = pdf_root().map_err(|e| e.message)?;
+    with_db(|conn| {
+        crate::honoraires::honoraires_ouvrir_path(conn, &id, &root)
+            .map(|p| p.to_string_lossy().into_owned())
+    })
+    .map_err(|e| e.message)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn honoraires_annuler(id: String) -> Result<HonoraireDetail, String> {
+    let root = pdf_root().map_err(|e| e.message)?;
+    with_db(|conn| crate::honoraires::honoraires_annuler(conn, &id, &root))
+        .map_err(|e| e.message)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn honoraires_rdvs_disponibles(client_id: String) -> Result<Vec<Rdv>, String> {
+    with_db(|conn| crate::honoraires::honoraires_rdvs_disponibles(conn, &client_id))
+        .map_err(|e| e.message)
+}
+
 pub fn run_ntfy_sync() {
     tauri::async_runtime::spawn(async {
         let settings = load_settings();
@@ -729,7 +808,7 @@ mod tests {
 
     fn seed_tarif(conn: &Connection) -> Tarif {
         migrate(conn).unwrap();
-        tarifs_upsert(conn, None, "Consultation", 60, 5000).unwrap()
+        tarifs_upsert(conn, None, "Consultation", 60, 5000, true).unwrap()
     }
 
     fn test_settings(topic: &str, rappel_1h: bool) -> Settings {
@@ -744,6 +823,7 @@ mod tests {
             stripe: crate::settings::StripeSettings {
                 secret_key: String::new(),
             },
+            cabinet: crate::settings::CabinetSettings::default(),
         }
     }
 
@@ -1066,6 +1146,7 @@ mod tests {
             stripe: crate::settings::StripeSettings {
                 secret_key: "sk_test_secret".to_string(),
             },
+            cabinet: crate::settings::CabinetSettings::default(),
         };
         let input = SettingsSetInput {
             ntfy_serveur: "https://ntfy.sh".to_string(),
@@ -1076,6 +1157,13 @@ mod tests {
             rappel_1h: true,
             stripe_secret_key: String::new(),
             stripe_secret_clear: false,
+            cabinet_nom: String::new(),
+            cabinet_adresse: String::new(),
+            cabinet_telephone: String::new(),
+            cabinet_email: String::new(),
+            cabinet_siret: String::new(),
+            mention_tva: crate::settings::mention_tva_defaut().to_string(),
+            prefixe_numero: String::new(),
         };
         let updated = settings_apply(&input, &current);
         assert_eq!(updated.ntfy.token, "tok_secret");
@@ -1097,7 +1185,7 @@ mod tests {
     fn clients_upsert_roundtrip_dossier() {
         let conn = crate::db::open_memory().unwrap();
         migrate(&conn).unwrap();
-        let tarif = tarifs_upsert(&conn, None, "Consultation", 60, 5000).unwrap();
+        let tarif = tarifs_upsert(&conn, None, "Consultation", 60, 5000, true).unwrap();
         let c = clients_upsert(
             &conn,
             ClientWrite {
@@ -1237,6 +1325,7 @@ mod tests {
             stripe: crate::settings::StripeSettings {
                 secret_key: "sk_test_secret".to_string(),
             },
+            cabinet: crate::settings::CabinetSettings::default(),
         };
         let input = SettingsSetInput {
             ntfy_serveur: current.ntfy.serveur.clone(),
@@ -1247,6 +1336,13 @@ mod tests {
             rappel_1h: true,
             stripe_secret_key: String::new(),
             stripe_secret_clear: true,
+            cabinet_nom: String::new(),
+            cabinet_adresse: String::new(),
+            cabinet_telephone: String::new(),
+            cabinet_email: String::new(),
+            cabinet_siret: String::new(),
+            mention_tva: crate::settings::mention_tva_defaut().to_string(),
+            prefixe_numero: String::new(),
         };
         let updated = settings_apply(&input, &current);
         assert!(updated.ntfy.token.is_empty());
@@ -1278,8 +1374,8 @@ mod tests {
     fn rdv_update_tarif_change_efface_stripe() {
         let conn = crate::db::open_memory().unwrap();
         let client = seed_client(&conn);
-        let t1 = tarifs_upsert(&conn, None, "A", 60, 5000).unwrap();
-        let t2 = tarifs_upsert(&conn, None, "B", 60, 6000).unwrap();
+        let t1 = tarifs_upsert(&conn, None, "A", 60, 5000, true).unwrap();
+        let t2 = tarifs_upsert(&conn, None, "B", 60, 6000, true).unwrap();
         let rdv = rdv_create(
             &conn,
             &client.id,

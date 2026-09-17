@@ -14,4 +14,12 @@ describe('userMessage', () => {
 			"Impossible de terminer l'action. Réessayez."
 		);
 	});
+
+	test('messages honoraires spec', () => {
+		const msg = 'Indiquez le nom du cabinet dans les réglages.';
+		expect(userMessage(msg)).toBe(msg);
+		expect(userMessage("Ce client a encore des notes d'honoraires.")).toBe(
+			"Ce client a encore des notes d'honoraires."
+		);
+	});
 });

@@ -8,10 +8,20 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
+	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
 	import { Switch } from '$lib/components/ui/switch/index.js';
 
+	const mentionTvaDefaut = 'TVA au taux normal de 20 % (CGI, art. 278)';
+
 	let loaded = $state<SettingsPublic | null>(null);
+	let cabinetNom = $state('');
+	let cabinetAdresse = $state('');
+	let cabinetTelephone = $state('');
+	let cabinetEmail = $state('');
+	let cabinetSiret = $state('');
+	let mentionTva = $state('');
+	let prefixeNumero = $state('');
 	let ntfyServeur = $state('');
 	let ntfyTopic = $state('');
 	let ntfyToken = $state('');
@@ -25,6 +35,13 @@
 
 	onMount(async () => {
 		loaded = await settingsGet();
+		cabinetNom = loaded.cabinet_nom;
+		cabinetAdresse = loaded.cabinet_adresse;
+		cabinetTelephone = loaded.cabinet_telephone;
+		cabinetEmail = loaded.cabinet_email;
+		cabinetSiret = loaded.cabinet_siret;
+		mentionTva = loaded.mention_tva.trim() || mentionTvaDefaut;
+		prefixeNumero = loaded.prefixe_numero;
 		ntfyServeur = loaded.ntfy_serveur;
 		ntfyTopic = loaded.ntfy_topic;
 		rappel24h = loaded.rappel_24h;
@@ -39,6 +56,13 @@
 		saving = true;
 		try {
 			await settingsSet({
+				cabinet_nom: cabinetNom,
+				cabinet_adresse: cabinetAdresse,
+				cabinet_telephone: cabinetTelephone,
+				cabinet_email: cabinetEmail,
+				cabinet_siret: cabinetSiret,
+				mention_tva: mentionTva,
+				prefixe_numero: prefixeNumero,
 				ntfy_serveur: ntfyServeur,
 				ntfy_topic: ntfyTopic,
 				ntfy_token: ntfyToken,
@@ -80,6 +104,41 @@
 	{#if !loaded}
 		<Skeleton class="h-64 max-w-lg" />
 	{:else}
+		<section class="flex max-w-lg flex-col gap-4">
+			<h2 class="text-sm font-medium">Cabinet</h2>
+			<div class="flex flex-col gap-2">
+				<Label for="cab-nom">Nom</Label>
+				<Input id="cab-nom" bind:value={cabinetNom} />
+			</div>
+			<div class="flex flex-col gap-2">
+				<Label for="cab-adresse">Adresse</Label>
+				<Textarea id="cab-adresse" bind:value={cabinetAdresse} rows={3} />
+			</div>
+			<div class="flex flex-col gap-2">
+				<Label for="cab-telephone">Téléphone</Label>
+				<Input id="cab-telephone" type="tel" bind:value={cabinetTelephone} />
+			</div>
+			<div class="flex flex-col gap-2">
+				<Label for="cab-email">Email</Label>
+				<Input id="cab-email" type="email" bind:value={cabinetEmail} />
+			</div>
+			<div class="flex flex-col gap-2">
+				<Label for="cab-siret">SIRET</Label>
+				<Input id="cab-siret" bind:value={cabinetSiret} />
+			</div>
+			<div class="flex flex-col gap-2">
+				<Label for="cab-mention-tva">Mention TVA</Label>
+				<Input id="cab-mention-tva" bind:value={mentionTva} />
+			</div>
+			<div class="flex flex-col gap-2">
+				<Label for="cab-prefixe">Préfixe numéro</Label>
+				<Input id="cab-prefixe" bind:value={prefixeNumero} />
+				<p class="text-muted-foreground text-xs">
+					Vide = 2026-0001. Exemple NH → NH-2026-0001.
+				</p>
+			</div>
+		</section>
+
 		<section class="flex max-w-lg flex-col gap-4">
 			<h2 class="text-sm font-medium">ntfy</h2>
 			<div class="flex flex-col gap-2">

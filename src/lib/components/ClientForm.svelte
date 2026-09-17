@@ -6,6 +6,7 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
+	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import {
@@ -33,6 +34,7 @@
 		urgenceTelephone: string;
 		orientation: string;
 		frequence: string;
+		adresse: string;
 	};
 
 	let {
@@ -49,10 +51,12 @@
 		urgenceNom = $bindable(),
 		urgenceTelephone = $bindable(),
 		orientation = $bindable(),
-		frequence = $bindable()
+		frequence = $bindable(),
+		adresse = $bindable()
 	}: Props = $props();
 
 	let showNaissance = $state(false);
+	let showAdresse = $state(false);
 	let showStatut = $state(false);
 	let showTarif = $state(false);
 	let showFrequence = $state(false);
@@ -67,7 +71,8 @@
 			showFrequence ||
 			showOrientation ||
 			showMemo ||
-			showUrgence
+			showUrgence ||
+			showAdresse
 	);
 
 	$effect(() => {
@@ -79,6 +84,7 @@
 		showOrientation = false;
 		showMemo = false;
 		showUrgence = false;
+		showAdresse = false;
 	});
 
 	function onStatutChange(v: string | undefined) {
@@ -103,6 +109,10 @@
 				<Label for="telephone">Téléphone</Label>
 				<Input id="telephone" bind:value={telephone} />
 			</div>
+		</div>
+		<div class="flex flex-col gap-2">
+			<Label for="adresse">Adresse</Label>
+			<Textarea id="adresse" bind:value={adresse} rows={3} />
 		</div>
 		<div class="flex flex-col gap-2">
 			<Label for="date-naissance">Date de naissance</Label>
@@ -230,6 +240,7 @@
 				<DropdownMenu.CheckboxItem bind:checked={showUrgence}>
 					Personne à prévenir
 				</DropdownMenu.CheckboxItem>
+				<DropdownMenu.CheckboxItem bind:checked={showAdresse}>Adresse</DropdownMenu.CheckboxItem>
 			</DropdownMenu.Group>
 		</DropdownMenu.Content>
 	</DropdownMenu.Root>
@@ -312,6 +323,12 @@
 						placeholder="Téléphone"
 						bind:value={urgenceTelephone}
 					/>
+				</div>
+			{/if}
+			{#if showAdresse}
+				<div class="flex flex-col gap-2">
+					<Label for="create-adresse">Adresse</Label>
+					<Textarea id="create-adresse" bind:value={adresse} rows={3} />
 				</div>
 			{/if}
 		</div>

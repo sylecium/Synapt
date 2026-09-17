@@ -36,6 +36,13 @@ export function userMessage(err: unknown): string {
 	if (lower.includes('note introuvable')) {
 		return 'Note introuvable.';
 	}
+	if (
+		raw.includes("notes d'honoraires") ||
+		raw.includes('nom du cabinet') ||
+		raw.includes('préfixe')
+	) {
+		return raw;
+	}
 	if (lower.includes('stripe')) {
 		return "Le lien de paiement n'a pas pu être créé. Vérifiez la clé Stripe dans les réglages.";
 	}
