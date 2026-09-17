@@ -48,7 +48,11 @@ jobs:
         with:
           tagName: v__VERSION__
           releaseName: 'Synapt v__VERSION__'
-          releaseBody: 'Paquet Debian et latest.json pour l’updater.'
           releaseDraft: false
           prerelease: false
           args: --bundles deb
+
+      - name: Notes de release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "$GITHUB_REF_NAME" --notes-file .github/release-body.md
