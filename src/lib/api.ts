@@ -61,6 +61,8 @@ export const tarifsUpsert = (p: {
 export const tarifsSetActif = (id: string, actif: boolean) =>
 	invoke<Tarif>('tarifs_set_actif', { id, actif });
 
+export const tarifsDelete = (id: string) => invoke<void>('tarifs_delete', { id });
+
 export const notesList = (p?: { client_id?: string; perso?: boolean }) =>
 	invoke<Note[]>('notes_list', {
 		client_id: p?.client_id ?? null,

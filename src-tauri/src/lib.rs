@@ -30,6 +30,15 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(updater_plugin())
         .plugin(tauri_plugin_process::init())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::SIZE
+                        | tauri_plugin_window_state::StateFlags::POSITION
+                        | tauri_plugin_window_state::StateFlags::MAXIMIZED,
+                )
+                .build(),
+        )
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -66,6 +75,7 @@ pub fn run() {
             commands::tarifs_list,
             commands::tarifs_upsert,
             commands::tarifs_set_actif,
+            commands::tarifs_delete,
             commands::notes_list,
             commands::notes_upsert,
             commands::notes_delete,

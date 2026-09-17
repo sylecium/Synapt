@@ -518,6 +518,11 @@ pub fn tarifs_set_actif(id: String, actif: bool) -> Result<Tarif, String> {
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub fn tarifs_delete(id: String) -> Result<(), String> {
+    with_db(|conn| repo::tarifs_delete(conn, &id)).map_err(|e| e.message)
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub fn notes_list(client_id: Option<String>, perso: bool) -> Result<Vec<Note>, String> {
     with_db(|conn| repo::notes_list(conn, client_id, perso)).map_err(|e| e.message)
 }

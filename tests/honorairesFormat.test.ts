@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { formatTarifPrix, moyenPaiementLabel, rdvClientLabel } from '../src/lib/format';
+import {
+	eurosToCentimes,
+	formatTarifPrix,
+	moyenPaiementLabel,
+	rdvClientLabel
+} from '../src/lib/format';
 
 describe('moyenPaiementLabel', () => {
 	test('libellés', () => {
@@ -14,6 +19,19 @@ describe('formatTarifPrix', () => {
 	test('suffixe HT ou TTC', () => {
 		expect(formatTarifPrix({ prix_centimes: 5000, prix_ttc: true })).toContain('TTC');
 		expect(formatTarifPrix({ prix_centimes: 5000, prix_ttc: false })).toContain('HT');
+	});
+});
+
+describe('eurosToCentimes', () => {
+	test('accepte un nombre (input type=number)', () => {
+		expect(eurosToCentimes(60)).toBe(6000);
+		expect(eurosToCentimes(60.5)).toBe(6050);
+	});
+
+	test('accepte une chaîne FR avec virgule et espaces', () => {
+		expect(eurosToCentimes('50.00')).toBe(5000);
+		expect(eurosToCentimes('60,00')).toBe(6000);
+		expect(eurosToCentimes('1 234,56')).toBe(123456);
 	});
 });
 

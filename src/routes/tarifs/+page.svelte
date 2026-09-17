@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
-	import { tarifsList, tarifsSetActif, tarifsUpsert } from '$lib/api';
+	import { tarifsDelete, tarifsList, tarifsSetActif, tarifsUpsert } from '$lib/api';
 	import { userMessage } from '$lib/errors';
 	import type { Tarif } from '$lib/types';
 	import { centimesToEuros, eurosToCentimes, formatTarifPrix } from '$lib/format';
@@ -25,6 +25,9 @@
 	let prixTtc = $state(true);
 	let saving = $state(false);
 	let initial = $state(true);
+	let deleteOpen = $state(false);
+	let deleteTarget = $state<{ id: string; nom: string } | null>(null);
+	let deleting = $state(false);
 
 	onMount(load);
 
@@ -81,6 +84,27 @@
 			toast.success(actif ? 'Tarif réactivé' : 'Tarif désactivé');
 		} catch (e) {
 			toast.error(userMessage(e));
+		}
+	}
+
+	function askDelete(tarif: Tarif) {
+		deleteTarget = { id: tarif.id, nom: tarif.nom };
+		deleteOpen = true;
+	}
+
+	async function confirmDelete() {
+		if (!deleteTarget) return;
+		deleting = true;
+		try {
+			await tarifsDelete(deleteTarget.id);
+			toast.success('Tarif supprimé');
+			deleteOpen = false;
+			deleteTarget = null;
+			await load();
+		} catch (e) {
+			toast.error(userMessage(e));
+		} finally {
+			deleting = false;
 		}
 	}
 </script>
@@ -165,6 +189,16 @@
 													Réactiver
 												</Button>
 											{/if}
+											<Button
+												variant="outline"
+												size="sm"
+												onclick={(e) => {
+													e.stopPropagation();
+													askDelete(tarif);
+												}}
+											>
+												Supprimer
+											</Button>
 										</div>
 									</Table.Cell>
 								</Table.Row>
@@ -181,6 +215,9 @@
 									Réactiver
 								</ContextMenu.Item>
 							{/if}
+							<ContextMenu.Item variant="destructive" onSelect={() => askDelete(tarif)}>
+								Supprimer
+							</ContextMenu.Item>
 						</ContextMenu.Content>
 					</ContextMenu.Root>
 				{/each}
@@ -222,6 +259,24 @@
 		<Dialog.Footer>
 			<Button variant="outline" onclick={() => (dialogOpen = false)}>Annuler</Button>
 			<Button onclick={save} disabled={saving}>Enregistrer</Button>
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>
+
+<Dialog.Root bind:open={deleteOpen}>
+	<Dialog.Content>
+		<Dialog.Header>
+			<Dialog.Title>Supprimer {deleteTarget?.nom ?? 'ce tarif'} ?</Dialog.Title>
+			<Dialog.Description>
+				Les clients qui l'avaient comme tarif habituel n'en auront plus. Les rendez-vous prévus
+				doivent d'abord être changés ou annulés.
+			</Dialog.Description>
+		</Dialog.Header>
+		<Dialog.Footer>
+			<Button variant="outline" onclick={() => (deleteOpen = false)}>Annuler</Button>
+			<Button variant="destructive" onclick={confirmDelete} disabled={deleting}>
+				Supprimer
+			</Button>
 		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>

@@ -161,8 +161,11 @@ export function localDatetimeToUtcIso(localValue: string): string {
 	return new Date(localValue).toISOString();
 }
 
-export function eurosToCentimes(euros: string): number {
-	const n = Number.parseFloat(euros.replace(',', '.'));
+export function eurosToCentimes(euros: string | number): number {
+	const raw = String(euros ?? '')
+		.replace(/\s/g, '')
+		.replace(',', '.');
+	const n = Number.parseFloat(raw);
 	if (Number.isNaN(n)) return 0;
 	return Math.round(n * 100);
 }

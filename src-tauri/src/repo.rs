@@ -447,6 +447,41 @@ pub fn tarifs_set_actif(conn: &Connection, id: &str, actif: bool) -> Result<Tari
     tarifs_get(conn, id)
 }
 
+pub fn tarifs_delete(conn: &Connection, id: &str) -> Result<(), AppError> {
+    ensure_migrated(conn)?;
+    let exists: bool = conn.query_row(
+        "SELECT COUNT(*) FROM tarifs WHERE id = ?1",
+        params![id],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        return Err(AppError::new("tarif introuvable"));
+    }
+    let planifies: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM rdv WHERE tarif_id = ?1 AND statut = 'planifie'",
+        params![id],
+        |row| row.get(0),
+    )?;
+    if planifies > 0 {
+        return Err(AppError::new(
+            "Ce tarif a encore des rendez-vous prévus. Change-les ou annule-les avant de le supprimer.",
+        ));
+    }
+
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "UPDATE clients SET tarif_id = NULL, updated_at = ?1 WHERE tarif_id = ?2",
+        params![now_iso(), id],
+    )?;
+    tx.execute(
+        "UPDATE rdv SET tarif_id = NULL WHERE tarif_id = ?1",
+        params![id],
+    )?;
+    tx.execute("DELETE FROM tarifs WHERE id = ?1", params![id])?;
+    tx.commit()?;
+    Ok(())
+}
+
 pub fn notes_upsert(
     conn: &Connection,
     id: Option<&str>,
@@ -838,5 +873,71 @@ mod tests {
         rdv_annuler(&conn, &rdv.id).unwrap();
         let err = clients_delete(&conn, &client.id).unwrap_err();
         assert_eq!(err.message, "Ce client a encore des notes d'honoraires.");
+    }
+
+    #[test]
+    fn tarifs_delete_ok_et_detache_client() {
+        let conn = open_memory().unwrap();
+        migrate(&conn).unwrap();
+        let tarif = tarifs_upsert(&conn, None, "Consultation", 60, 5000, true).unwrap();
+        let client = clients_upsert(
+            &conn,
+            ClientWrite {
+                nom: "Alice".into(),
+                tarif_id: Some(tarif.id.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        tarifs_delete(&conn, &tarif.id).unwrap();
+        assert!(tarifs_get(&conn, &tarif.id).is_err());
+        assert!(clients_get(&conn, &client.id).unwrap().tarif_id.is_none());
+    }
+
+    #[test]
+    fn tarifs_delete_refuse_rdv_planifie() {
+        let conn = open_memory().unwrap();
+        migrate(&conn).unwrap();
+        let tarif = tarifs_upsert(&conn, None, "Consultation", 60, 5000, true).unwrap();
+        rdv_create(
+            &conn,
+            None,
+            Some(tarif.id.clone()),
+            "2026-09-11T10:00:00Z",
+            60,
+            None,
+        )
+        .unwrap();
+        let err = tarifs_delete(&conn, &tarif.id).unwrap_err();
+        assert!(err.message.contains("rendez-vous prévus"));
+        assert!(tarifs_get(&conn, &tarif.id).is_ok());
+    }
+
+    #[test]
+    fn tarifs_delete_detache_rdv_annule() {
+        let conn = open_memory().unwrap();
+        migrate(&conn).unwrap();
+        let tarif = tarifs_upsert(&conn, None, "Consultation", 60, 5000, true).unwrap();
+        let rdv = rdv_create(
+            &conn,
+            None,
+            Some(tarif.id.clone()),
+            "2026-09-11T10:00:00Z",
+            60,
+            None,
+        )
+        .unwrap();
+        rdv_annuler(&conn, &rdv.id).unwrap();
+        tarifs_delete(&conn, &tarif.id).unwrap();
+        let got = fetch_rdv(&conn, &rdv.id).unwrap();
+        assert!(got.tarif_id.is_none());
+    }
+
+    #[test]
+    fn tarifs_delete_inconnu() {
+        let conn = open_memory().unwrap();
+        migrate(&conn).unwrap();
+        let err = tarifs_delete(&conn, "missing").unwrap_err();
+        assert_eq!(err.message, "tarif introuvable");
     }
 }
