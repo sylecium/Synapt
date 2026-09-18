@@ -1,4 +1,5 @@
 use std::time::Duration;
+use tauri::Manager;
 
 pub mod commands;
 pub mod db;
@@ -48,19 +49,18 @@ pub fn run() {
                 )?;
             }
 
-            if let Ok(path) = db::db_path() {
-                if let Ok(conn) = db::open_file(&path) {
-                    if let Err(e) = db::migrate(&conn) {
-                        eprintln!("setup migrate: {}", e.message);
-                    }
-                }
-            }
+            let conn = db::init_db().map_err(|e| {
+                eprintln!("setup init_db: {}", e.message);
+                Box::<dyn std::error::Error>::from(e.message)
+            })?;
+            app.manage(db::DbState::new(conn));
 
-            commands::run_ntfy_sync();
+            let handle = app.handle().clone();
+            commands::run_ntfy_sync(handle.clone());
 
-            std::thread::spawn(|| loop {
+            std::thread::spawn(move || loop {
                 std::thread::sleep(Duration::from_secs(3600));
-                commands::run_ntfy_sync();
+                commands::run_ntfy_sync(handle.clone());
             });
 
             Ok(())

@@ -34,7 +34,7 @@ export function formatWeekLabel(startMonday: Date): string {
 	const end = addDays(startMonday, 6);
 	const dayFmt = new Intl.DateTimeFormat('fr-FR', { day: 'numeric' });
 	const endFmt = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short' });
-	return `${dayFmt.format(startMonday)}–${endFmt.format(end)}`;
+	return `${dayFmt.format(startMonday)}-${endFmt.format(end)}`;
 }
 
 export function formatDayLabel(d: Date): string {

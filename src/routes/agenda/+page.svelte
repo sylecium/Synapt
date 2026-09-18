@@ -80,34 +80,28 @@
 	}
 
 	function goToday() {
-		selectedDay = new Date();
-		weekStart = startOfWeekMonday(selectedDay);
-		calendarValue = dateToCalendar(selectedDay);
-		loadRdvs();
+		const today = new Date();
+		const cur = calendarValue ? calendarToDate(calendarValue) : null;
+		if (
+			cur &&
+			cur.getFullYear() === today.getFullYear() &&
+			cur.getMonth() === today.getMonth() &&
+			cur.getDate() === today.getDate()
+		) {
+			void loadRdvs();
+		} else {
+			calendarValue = dateToCalendar(today);
+		}
 	}
 
 	function prev() {
-		if (dayView) {
-			selectedDay = addDays(selectedDay, -1);
-			weekStart = startOfWeekMonday(selectedDay);
-		} else {
-			weekStart = addDays(weekStart, -7);
-			selectedDay = weekStart;
-		}
-		calendarValue = dateToCalendar(selectedDay);
-		loadRdvs();
+		const base = dayView ? selectedDay : weekStart;
+		calendarValue = dateToCalendar(addDays(base, dayView ? -1 : -7));
 	}
 
 	function next() {
-		if (dayView) {
-			selectedDay = addDays(selectedDay, 1);
-			weekStart = startOfWeekMonday(selectedDay);
-		} else {
-			weekStart = addDays(weekStart, 7);
-			selectedDay = weekStart;
-		}
-		calendarValue = dateToCalendar(selectedDay);
-		loadRdvs();
+		const base = dayView ? selectedDay : weekStart;
+		calendarValue = dateToCalendar(addDays(base, dayView ? 1 : 7));
 	}
 
 	function onSlot(isoUtc: string) {

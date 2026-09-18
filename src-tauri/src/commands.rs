@@ -1,22 +1,20 @@
 use std::path::PathBuf;
-use std::sync::Mutex;
 
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use tauri::Manager;
 use uuid::Uuid;
 
-use crate::db::{db_path, migrate, open_file};
+use crate::db::DbState;
 use crate::error::AppError;
 use crate::models::{
     Client, ClientWrite, Dashboard, Honoraire, HonoraireDetail, Note, Rdv, RdvDetail, Tarif,
 };
 use crate::ntfy::{echeance, ntfy_delete, should_publish, NtfyClient, RappelKind, ReqwestNtfy};
-use crate::repo::{self, ensure_migrated, fetch_rdv, list_rdvs_planifies, now_iso};
+use crate::repo::{self, fetch_rdv, list_rdvs_planifies, now_iso};
 use crate::settings::{load_settings, save_settings, Settings, SettingsPublic};
 use crate::stripe::stripe_create_payment_link;
-
-static DB_MUTEX: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RdvCreateResult {
@@ -41,17 +39,6 @@ pub struct SettingsSetInput {
     pub cabinet_siret: String,
     pub mention_tva: String,
     pub prefixe_numero: String,
-}
-
-fn with_db<F, T>(f: F) -> Result<T, AppError>
-where
-    F: FnOnce(&Connection) -> Result<T, AppError>,
-{
-    let _guard = DB_MUTEX.lock().unwrap();
-    let path = db_path()?;
-    let conn = open_file(&path)?;
-    migrate(&conn)?;
-    f(&conn)
 }
 
 fn fetch_tarif(conn: &Connection, tarif_id: &str) -> Result<Tarif, AppError> {
@@ -131,7 +118,6 @@ fn ntfy_collect_pending(
     now: DateTime<Utc>,
     only_rdv_id: Option<&str>,
 ) -> Result<Vec<PendingNtfyJob>, AppError> {
-    ensure_migrated(conn)?;
     let rdvs = list_rdvs_planifies(conn)?;
     let mut jobs = Vec::new();
     for rdv in rdvs {
@@ -200,7 +186,11 @@ pub fn ntfy_sync<C: NtfyClient>(
     Ok(warnings)
 }
 
-async fn ntfy_run_pending_jobs(settings: &Settings, jobs: Vec<PendingNtfyJob>) -> Vec<String> {
+async fn ntfy_run_pending_jobs(
+    db: &DbState,
+    settings: &Settings,
+    jobs: Vec<PendingNtfyJob>,
+) -> Vec<String> {
     let mut warnings = Vec::new();
     for job in jobs {
         let ntfy = ReqwestNtfy::for_rdv(
@@ -220,7 +210,7 @@ async fn ntfy_run_pending_jobs(settings: &Settings, jobs: Vec<PendingNtfyJob>) -
                         }
                     }
                 }
-                if let Err(e) = with_db(|conn| {
+                if let Err(e) = db.with_conn(|conn| {
                     insert_rappel(conn, &job.rdv_id, job.kind, &ntfy_id, job.echeance_at)
                 }) {
                     eprintln!("ntfy insert rappel: {}", e.message);
@@ -236,12 +226,17 @@ async fn ntfy_run_pending_jobs(settings: &Settings, jobs: Vec<PendingNtfyJob>) -
     warnings
 }
 
-async fn ntfy_schedule_rdv(settings: &Settings, rdv_id: &str, now: DateTime<Utc>) -> Vec<String> {
-    let jobs = match with_db(|conn| ntfy_collect_pending(conn, settings, now, Some(rdv_id))) {
+async fn ntfy_schedule_rdv(
+    db: &DbState,
+    settings: &Settings,
+    rdv_id: &str,
+    now: DateTime<Utc>,
+) -> Vec<String> {
+    let jobs = match db.with_conn(|conn| ntfy_collect_pending(conn, settings, now, Some(rdv_id))) {
         Ok(j) => j,
         Err(e) => return vec![e.message],
     };
-    ntfy_run_pending_jobs(settings, jobs).await
+    ntfy_run_pending_jobs(db, settings, jobs).await
 }
 
 fn rappels_ntfy_ids(conn: &Connection, rdv_id: &str) -> Result<Vec<String>, AppError> {
@@ -263,9 +258,9 @@ fn mark_rappels_annule(conn: &Connection, rdv_id: &str) -> Result<(), AppError> 
     Ok(())
 }
 
-async fn cancel_rappels_ntfy(settings: &Settings, rdv_id: &str) -> Vec<String> {
+async fn cancel_rappels_ntfy(db: &DbState, settings: &Settings, rdv_id: &str) -> Vec<String> {
     let mut warnings = Vec::new();
-    let ntfy_ids = match with_db(|conn| rappels_ntfy_ids(conn, rdv_id)) {
+    let ntfy_ids = match db.with_conn(|conn| rappels_ntfy_ids(conn, rdv_id)) {
         Ok(ids) => ids,
         Err(e) => {
             warnings.push(e.message);
@@ -280,7 +275,7 @@ async fn cancel_rappels_ntfy(settings: &Settings, rdv_id: &str) -> Vec<String> {
         }
     }
 
-    if let Err(e) = with_db(|conn| mark_rappels_annule(conn, rdv_id)) {
+    if let Err(e) = db.with_conn(|conn| mark_rappels_annule(conn, rdv_id)) {
         warnings.push(e.message);
     }
     warnings
@@ -335,15 +330,16 @@ fn clear_stripe_link(conn: &Connection, rdv_id: &str) -> Result<Rdv, AppError> {
 }
 
 async fn ensure_stripe_on_rdv(
+    db: &DbState,
     settings: &Settings,
     rdv: Rdv,
     recreate: bool,
 ) -> Result<(Rdv, Vec<String>), AppError> {
     let mut warnings = Vec::new();
-    let tarif_data = with_db(|conn| stripe_tarif_data(conn, &rdv, settings))?;
+    let tarif_data = db.with_conn(|conn| stripe_tarif_data(conn, &rdv, settings))?;
     if tarif_data.is_none() {
         if rdv.stripe_url.is_some() {
-            let cleared = with_db(|conn| clear_stripe_link(conn, &rdv.id))?;
+            let cleared = db.with_conn(|conn| clear_stripe_link(conn, &rdv.id))?;
             return Ok((cleared, warnings));
         }
         return Ok((rdv, warnings));
@@ -356,7 +352,7 @@ async fn ensure_stripe_on_rdv(
         .await
     {
         Ok((stripe_id, stripe_url)) => {
-            let updated = with_db(|conn| save_stripe_link(conn, &rdv.id, &stripe_id, &stripe_url))?;
+            let updated = db.with_conn(|conn| save_stripe_link(conn, &rdv.id, &stripe_id, &stripe_url))?;
             Ok((updated, warnings))
         }
         Err(e) => {
@@ -424,21 +420,21 @@ pub fn settings_set(input: SettingsSetInput) -> Result<(), String> {
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn clients_list() -> Result<Vec<Client>, String> {
-    with_db(repo::clients_list).map_err(|e| e.message)
+pub fn clients_list(db: tauri::State<'_, DbState>) -> Result<Vec<Client>, String> {
+    db.with_conn(repo::clients_list).map_err(|e| e.message)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn clients_get(id: String) -> Result<Client, String> {
-    with_db(|conn| repo::clients_get(conn, &id)).map_err(|e| e.message)
+pub fn clients_get(id: String, db: tauri::State<'_, DbState>) -> Result<Client, String> {
+    db.with_conn(|conn| repo::clients_get(conn, &id)).map_err(|e| e.message)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn clients_delete(id: String) -> Result<(), String> {
+pub async fn clients_delete(id: String, db: tauri::State<'_, DbState>) -> Result<(), String> {
     let settings = load_settings();
     let ntfy_ids =
-        with_db(|conn| repo::clients_rappels_ntfy_ids(conn, &id)).map_err(|e| e.message)?;
-    with_db(|conn| repo::clients_delete(conn, &id)).map_err(|e| e.message)?;
+        db.with_conn(|conn| repo::clients_rappels_ntfy_ids(conn, &id)).map_err(|e| e.message)?;
+    db.with_conn(|conn| repo::clients_delete(conn, &id)).map_err(|e| e.message)?;
     for ntfy_id in ntfy_ids {
         if let Err(e) = ntfy_delete(&settings, &ntfy_id).await {
             eprintln!("ntfy delete client: {}", e.message);
@@ -462,8 +458,9 @@ pub fn clients_upsert(
     orientation: Option<String>,
     frequence: Option<String>,
     adresse: Option<String>,
+    db: tauri::State<'_, DbState>,
 ) -> Result<Client, String> {
-    with_db(|conn| {
+    db.with_conn(|conn| {
         repo::clients_upsert(
             conn,
             ClientWrite {
@@ -487,8 +484,8 @@ pub fn clients_upsert(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn tarifs_list() -> Result<Vec<Tarif>, String> {
-    with_db(repo::tarifs_list).map_err(|e| e.message)
+pub fn tarifs_list(db: tauri::State<'_, DbState>) -> Result<Vec<Tarif>, String> {
+    db.with_conn(repo::tarifs_list).map_err(|e| e.message)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -498,8 +495,9 @@ pub fn tarifs_upsert(
     duree_minutes: i64,
     prix_centimes: i64,
     prix_ttc: bool,
+    db: tauri::State<'_, DbState>,
 ) -> Result<Tarif, String> {
-    with_db(|conn| {
+    db.with_conn(|conn| {
         repo::tarifs_upsert(
             conn,
             id.as_deref(),
@@ -513,18 +511,26 @@ pub fn tarifs_upsert(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn tarifs_set_actif(id: String, actif: bool) -> Result<Tarif, String> {
-    with_db(|conn| repo::tarifs_set_actif(conn, &id, actif)).map_err(|e| e.message)
+pub fn tarifs_set_actif(
+    id: String,
+    actif: bool,
+    db: tauri::State<'_, DbState>,
+) -> Result<Tarif, String> {
+    db.with_conn(|conn| repo::tarifs_set_actif(conn, &id, actif)).map_err(|e| e.message)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn tarifs_delete(id: String) -> Result<(), String> {
-    with_db(|conn| repo::tarifs_delete(conn, &id)).map_err(|e| e.message)
+pub fn tarifs_delete(id: String, db: tauri::State<'_, DbState>) -> Result<(), String> {
+    db.with_conn(|conn| repo::tarifs_delete(conn, &id)).map_err(|e| e.message)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn notes_list(client_id: Option<String>, perso: bool) -> Result<Vec<Note>, String> {
-    with_db(|conn| repo::notes_list(conn, client_id, perso)).map_err(|e| e.message)
+pub fn notes_list(
+    client_id: Option<String>,
+    perso: bool,
+    db: tauri::State<'_, DbState>,
+) -> Result<Vec<Note>, String> {
+    db.with_conn(|conn| repo::notes_list(conn, client_id, perso)).map_err(|e| e.message)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -532,14 +538,15 @@ pub fn notes_upsert(
     id: Option<String>,
     client_id: Option<String>,
     corps: String,
+    db: tauri::State<'_, DbState>,
 ) -> Result<Note, String> {
-    with_db(|conn| repo::notes_upsert(conn, id.as_deref(), client_id.as_deref(), &corps))
+    db.with_conn(|conn| repo::notes_upsert(conn, id.as_deref(), client_id.as_deref(), &corps))
         .map_err(|e| e.message)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn notes_delete(id: String) -> Result<(), String> {
-    with_db(|conn| repo::notes_delete(conn, &id)).map_err(|e| e.message)
+pub fn notes_delete(id: String, db: tauri::State<'_, DbState>) -> Result<(), String> {
+    db.with_conn(|conn| repo::notes_delete(conn, &id)).map_err(|e| e.message)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -547,14 +554,15 @@ pub fn rdv_list(
     from: Option<String>,
     to: Option<String>,
     client_id: Option<String>,
+    db: tauri::State<'_, DbState>,
 ) -> Result<Vec<Rdv>, String> {
-    with_db(|conn| repo::rdv_list(conn, from.as_deref(), to.as_deref(), client_id.as_deref()))
+    db.with_conn(|conn| repo::rdv_list(conn, from.as_deref(), to.as_deref(), client_id.as_deref()))
         .map_err(|e| e.message)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn rdv_get(id: String) -> Result<RdvDetail, String> {
-    with_db(|conn| repo::rdv_get(conn, &id)).map_err(|e| e.message)
+pub fn rdv_get(id: String, db: tauri::State<'_, DbState>) -> Result<RdvDetail, String> {
+    db.with_conn(|conn| repo::rdv_get(conn, &id)).map_err(|e| e.message)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -564,28 +572,30 @@ pub async fn rdv_create(
     debut: String,
     duree_minutes: i64,
     note: Option<String>,
+    db: tauri::State<'_, DbState>,
 ) -> Result<RdvCreateResult, String> {
     let settings = load_settings();
     let now = Utc::now();
 
-    let rdv = with_db(|conn| {
-        repo::rdv_create(
-            conn,
-            client_id.as_deref(),
-            tarif_id.clone(),
-            &debut,
-            duree_minutes,
-            note.clone(),
-        )
-    })
-    .map_err(|e| e.message)?;
+    let rdv = db
+        .with_conn(|conn| {
+            repo::rdv_create(
+                conn,
+                client_id.as_deref(),
+                tarif_id.clone(),
+                &debut,
+                duree_minutes,
+                note.clone(),
+            )
+        })
+        .map_err(|e| e.message)?;
 
     let mut warnings = Vec::new();
-    let (rdv, stripe_warnings) = ensure_stripe_on_rdv(&settings, rdv, false)
+    let (rdv, stripe_warnings) = ensure_stripe_on_rdv(&db, &settings, rdv, false)
         .await
         .map_err(|e| e.message)?;
     warnings.extend(stripe_warnings);
-    warnings.extend(ntfy_schedule_rdv(&settings, &rdv.id, now).await);
+    warnings.extend(ntfy_schedule_rdv(&db, &settings, &rdv.id, now).await);
 
     Ok(RdvCreateResult { rdv, warnings })
 }
@@ -598,11 +608,12 @@ pub async fn rdv_update(
     debut: String,
     duree_minutes: i64,
     note: Option<String>,
+    db: tauri::State<'_, DbState>,
 ) -> Result<RdvCreateResult, String> {
     let settings = load_settings();
     let now = Utc::now();
 
-    let existing = with_db(|conn| repo::rdv_get(conn, &id)).map_err(|e| e.message)?;
+    let existing = db.with_conn(|conn| repo::rdv_get(conn, &id)).map_err(|e| e.message)?;
     let debut_changed = match (
         repo::parse_debut_utc(&existing.rdv.debut),
         repo::parse_debut_utc(&debut),
@@ -612,55 +623,66 @@ pub async fn rdv_update(
     };
     let tarif_changed = existing.rdv.tarif_id != tarif_id;
 
-    let rdv = with_db(|conn| {
-        repo::rdv_update(
-            conn,
-            &id,
-            client_id.as_deref(),
-            tarif_id.clone(),
-            &debut,
-            duree_minutes,
-            note.clone(),
-        )
-    })
-    .map_err(|e| e.message)?;
+    let rdv = db
+        .with_conn(|conn| {
+            repo::rdv_update(
+                conn,
+                &id,
+                client_id.as_deref(),
+                tarif_id.clone(),
+                &debut,
+                duree_minutes,
+                note.clone(),
+            )
+        })
+        .map_err(|e| e.message)?;
 
     let mut warnings = Vec::new();
-    let (rdv, stripe_warnings) = ensure_stripe_on_rdv(&settings, rdv, tarif_changed)
+    let (rdv, stripe_warnings) = ensure_stripe_on_rdv(&db, &settings, rdv, tarif_changed)
         .await
         .map_err(|e| e.message)?;
     warnings.extend(stripe_warnings);
     if debut_changed {
-        warnings.extend(cancel_rappels_ntfy(&settings, &id).await);
-        warnings.extend(ntfy_schedule_rdv(&settings, &rdv.id, now).await);
+        warnings.extend(cancel_rappels_ntfy(&db, &settings, &id).await);
+        warnings.extend(ntfy_schedule_rdv(&db, &settings, &rdv.id, now).await);
     }
 
     Ok(RdvCreateResult { rdv, warnings })
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn rdv_annuler(id: String) -> Result<RdvCreateResult, String> {
+pub async fn rdv_annuler(
+    id: String,
+    db: tauri::State<'_, DbState>,
+) -> Result<RdvCreateResult, String> {
     let settings = load_settings();
-    let rdv = with_db(|conn| repo::rdv_annuler(conn, &id)).map_err(|e| e.message)?;
-    let warnings = cancel_rappels_ntfy(&settings, &id).await;
+    let rdv = db.with_conn(|conn| repo::rdv_annuler(conn, &id)).map_err(|e| e.message)?;
+    let warnings = cancel_rappels_ntfy(&db, &settings, &id).await;
     Ok(RdvCreateResult { rdv, warnings })
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn rdv_set_note(id: String, note: Option<String>) -> Result<Rdv, String> {
-    with_db(|conn| repo::rdv_set_note(conn, &id, note)).map_err(|e| e.message)
+pub fn rdv_set_note(
+    id: String,
+    note: Option<String>,
+    db: tauri::State<'_, DbState>,
+) -> Result<Rdv, String> {
+    db.with_conn(|conn| repo::rdv_set_note(conn, &id, note)).map_err(|e| e.message)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn rdv_dashboard() -> Result<Dashboard, String> {
-    with_db(|conn| repo::rdv_dashboard(conn, Utc::now())).map_err(|e| e.message)
+pub fn rdv_dashboard(db: tauri::State<'_, DbState>) -> Result<Dashboard, String> {
+    db.with_conn(|conn| repo::rdv_dashboard(conn, Utc::now())).map_err(|e| e.message)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn stripe_ensure_link(rdv_id: String) -> Result<Rdv, String> {
+pub async fn stripe_ensure_link(
+    rdv_id: String,
+    db: tauri::State<'_, DbState>,
+) -> Result<Rdv, String> {
     let settings = load_settings();
-    let rdv = with_db(|conn| fetch_rdv(conn, &rdv_id)).map_err(|e| e.message)?;
-    let (rdv, warnings) = ensure_stripe_on_rdv(&settings, rdv, true)
+    let rdv = db.with_conn(|conn| fetch_rdv(conn, &rdv_id)).map_err(|e| e.message)?;
+    let (rdv, warnings) = ensure_stripe_on_rdv(&db, &settings, rdv, true)
         .await
         .map_err(|e| e.message)?;
     if rdv.stripe_url.is_none() {
@@ -686,33 +708,43 @@ fn pdf_root() -> Result<PathBuf, AppError> {
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn honoraires_list(client_id: Option<String>) -> Result<Vec<Honoraire>, String> {
-    with_db(|conn| crate::honoraires::honoraires_list(conn, client_id.as_deref()))
+pub fn honoraires_list(
+    client_id: Option<String>,
+    db: tauri::State<'_, DbState>,
+) -> Result<Vec<Honoraire>, String> {
+    db.with_conn(|conn| crate::honoraires::honoraires_list(conn, client_id.as_deref()))
         .map_err(|e| e.message)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn honoraires_get(id: String) -> Result<HonoraireDetail, String> {
-    with_db(|conn| crate::honoraires::honoraires_get(conn, &id)).map_err(|e| e.message)
+pub fn honoraires_get(
+    id: String,
+    db: tauri::State<'_, DbState>,
+) -> Result<HonoraireDetail, String> {
+    db.with_conn(|conn| crate::honoraires::honoraires_get(conn, &id)).map_err(|e| e.message)
 }
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn honoraires_create(
     rdv_ids: Vec<String>,
     moyen_paiement: String,
+    db: tauri::State<'_, DbState>,
 ) -> Result<HonoraireDetail, String> {
     let cabinet = load_settings().cabinet;
     let root = pdf_root().map_err(|e| e.message)?;
-    with_db(|conn| {
+    db.with_conn(|conn| {
         crate::honoraires::honoraires_create(conn, &cabinet, &rdv_ids, &moyen_paiement, &root)
     })
     .map_err(|e| e.message)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn honoraires_ouvrir(id: String) -> Result<String, String> {
+pub fn honoraires_ouvrir(
+    id: String,
+    db: tauri::State<'_, DbState>,
+) -> Result<String, String> {
     let root = pdf_root().map_err(|e| e.message)?;
-    with_db(|conn| {
+    db.with_conn(|conn| {
         crate::honoraires::honoraires_ouvrir_path(conn, &id, &root)
             .map(|p| p.to_string_lossy().into_owned())
     })
@@ -720,29 +752,37 @@ pub fn honoraires_ouvrir(id: String) -> Result<String, String> {
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn honoraires_annuler(id: String) -> Result<HonoraireDetail, String> {
+pub fn honoraires_annuler(
+    id: String,
+    db: tauri::State<'_, DbState>,
+) -> Result<HonoraireDetail, String> {
     let root = pdf_root().map_err(|e| e.message)?;
-    with_db(|conn| crate::honoraires::honoraires_annuler(conn, &id, &root)).map_err(|e| e.message)
-}
-
-#[tauri::command(rename_all = "snake_case")]
-pub fn honoraires_rdvs_disponibles(client_id: String) -> Result<Vec<Rdv>, String> {
-    with_db(|conn| crate::honoraires::honoraires_rdvs_disponibles(conn, &client_id))
+    db.with_conn(|conn| crate::honoraires::honoraires_annuler(conn, &id, &root))
         .map_err(|e| e.message)
 }
 
-pub fn run_ntfy_sync() {
-    tauri::async_runtime::spawn(async {
+#[tauri::command(rename_all = "snake_case")]
+pub fn honoraires_rdvs_disponibles(
+    client_id: String,
+    db: tauri::State<'_, DbState>,
+) -> Result<Vec<Rdv>, String> {
+    db.with_conn(|conn| crate::honoraires::honoraires_rdvs_disponibles(conn, &client_id))
+        .map_err(|e| e.message)
+}
+
+pub fn run_ntfy_sync(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let db = app.state::<DbState>();
         let settings = load_settings();
         let now = Utc::now();
-        let jobs = match with_db(|conn| ntfy_collect_pending(conn, &settings, now, None)) {
+        let jobs = match db.with_conn(|conn| ntfy_collect_pending(conn, &settings, now, None)) {
             Ok(j) => j,
             Err(e) => {
                 eprintln!("ntfy_sync: {}", e.message);
                 return;
             }
         };
-        for w in ntfy_run_pending_jobs(&settings, jobs).await {
+        for w in ntfy_run_pending_jobs(&db, &settings, jobs).await {
             eprintln!("ntfy_sync: {}", w);
         }
     });

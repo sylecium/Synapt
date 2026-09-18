@@ -61,7 +61,7 @@
 	const stripeDisabled = $derived(!rdv || (!rdv.stripe_url && !!stripeHint));
 	const dateLabel = $derived(rdv ? formatLongDate(rdv.debut) : '');
 	const timeSpan = $derived(
-		rdv ? `${formatTime(rdv.debut)} – ${endTime(rdv.debut, rdv.duree_minutes)}` : ''
+		rdv ? `${formatTime(rdv.debut)} - ${endTime(rdv.debut, rdv.duree_minutes)}` : ''
 	);
 
 	$effect(() => {

@@ -57,31 +57,6 @@
 	const stripeHint = $derived(stripeBlockedReason(rdv, settings, tarifs));
 	const stripeDisabled = $derived(!!stripeHint);
 
-	$effect(() => {
-		const id = rdv.id;
-		const clientId = rdv.client_id;
-		if (!planifie || !clientId) {
-			honoraireEmis = null;
-			honoraireLoading = false;
-			return;
-		}
-		honoraireEmis = null;
-		honoraireLoading = true;
-		void (async () => {
-			try {
-				const found = await findHonoraireEmisForRdv(clientId, id);
-				if (rdv.id !== id) return;
-				honoraireEmis = found;
-			} catch (e) {
-				if (rdv.id !== id) return;
-				toast.error(userMessage(e));
-				honoraireEmis = null;
-			} finally {
-				if (rdv.id === id) honoraireLoading = false;
-			}
-		})();
-	});
-
 	onMount(async () => {
 		if (settingsFromParent !== undefined) return;
 		try {
@@ -134,14 +109,19 @@
 	}
 
 	async function refreshHonoraireEmis() {
-		if (!planifie) {
+		if (!planifie || !rdv.client_id) {
 			honoraireEmis = null;
+			honoraireLoading = false;
 			return;
 		}
+		honoraireLoading = true;
 		try {
 			honoraireEmis = await findHonoraireEmisForRdv(rdv.client_id, rdv.id);
 		} catch (e) {
 			toast.error(userMessage(e));
+			honoraireEmis = null;
+		} finally {
+			honoraireLoading = false;
 		}
 	}
 
@@ -152,7 +132,13 @@
 	}
 </script>
 
-<ContextMenu.Root>
+<ContextMenu.Root
+	onOpenChange={(open) => {
+		if (open) {
+			void refreshHonoraireEmis();
+		}
+	}}
+>
 	<ContextMenu.Trigger>
 		{#snippet child({ props })}
 			{@render children(props)}

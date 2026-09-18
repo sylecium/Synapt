@@ -2,7 +2,6 @@ use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone, Utc};
 use rusqlite::{params, Connection, Row};
 use uuid::Uuid;
 
-use crate::db::migrate;
 use crate::error::AppError;
 use crate::models::{Client, ClientWrite, Dashboard, Note, RappelNtfy, Rdv, RdvDetail, Tarif};
 use crate::overlap::overlaps;
@@ -15,8 +14,12 @@ pub fn now_iso() -> String {
     Utc::now().to_rfc3339()
 }
 
-pub fn ensure_migrated(conn: &Connection) -> Result<(), AppError> {
-    migrate(conn)
+pub fn ensure_migrated(_conn: &Connection) -> Result<(), AppError> {
+    Ok(())
+}
+
+pub fn format_utc_canonical(dt: &DateTime<Utc>) -> String {
+    dt.format("%Y-%m-%dT%H:%M:%S+00:00").to_string()
 }
 
 pub(crate) const RDV_SELECT: &str = "\
@@ -95,7 +98,6 @@ fn row_to_note(row: &Row<'_>) -> Result<Note, rusqlite::Error> {
 }
 
 pub fn list_rdvs_planifies(conn: &Connection) -> Result<Vec<Rdv>, AppError> {
-    ensure_migrated(conn)?;
     let sql = format!("{RDV_SELECT} WHERE rdv.statut = 'planifie'");
     let mut stmt = conn.prepare(&sql)?;
     let rdvs = stmt
@@ -123,20 +125,24 @@ pub fn assert_no_overlap(
     duree_minutes: i64,
     except_id: Option<&str>,
 ) -> Result<(), AppError> {
-    parse_debut_utc(debut)?;
+    let debut_dt = parse_debut_utc(debut)?;
+    let fin_dt = debut_dt + Duration::minutes(duree_minutes);
+    let min_debut = format_utc_canonical(&(debut_dt - Duration::hours(24)));
+    let max_debut = format_utc_canonical(&fin_dt);
+
     let sql = if except_id.is_some() {
-        "SELECT debut, duree_minutes FROM rdv WHERE statut = 'planifie' AND id != ?1"
+        "SELECT debut, duree_minutes FROM rdv WHERE statut = 'planifie' AND debut >= ?1 AND debut < ?2 AND id != ?3"
     } else {
-        "SELECT debut, duree_minutes FROM rdv WHERE statut = 'planifie'"
+        "SELECT debut, duree_minutes FROM rdv WHERE statut = 'planifie' AND debut >= ?1 AND debut < ?2"
     };
     let mut stmt = conn.prepare(sql)?;
     let rows: Vec<(String, i64)> = if let Some(id) = except_id {
-        stmt.query_map(params![id], |row| {
+        stmt.query_map(params![min_debut, max_debut, id], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
         })?
         .collect::<Result<Vec<_>, _>>()?
     } else {
-        stmt.query_map([], |row| {
+        stmt.query_map(params![min_debut, max_debut], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
         })?
         .collect::<Result<Vec<_>, _>>()?
@@ -164,13 +170,6 @@ fn local_day_bounds(now: DateTime<Utc>) -> (DateTime<Utc>, DateTime<Utc>) {
         .unwrap()
         .with_timezone(&Utc);
     (start_utc, end_utc)
-}
-
-fn rdv_debut_in_range(debut: &str, from: DateTime<Utc>, to: DateTime<Utc>) -> bool {
-    match parse_debut_utc(debut) {
-        Ok(d) => d >= from && d < to,
-        Err(_) => false,
-    }
 }
 
 fn trim_opt(s: Option<String>) -> Option<String> {
@@ -573,12 +572,12 @@ pub fn rdv_create(
     duree_minutes: i64,
     note: Option<String>,
 ) -> Result<Rdv, AppError> {
-    ensure_migrated(conn)?;
     if duree_minutes <= 0 {
         return Err(AppError::new("duree_minutes doit etre positif"));
     }
 
-    let debut_norm = parse_debut_utc(debut)?.to_rfc3339();
+    let debut_dt = parse_debut_utc(debut)?;
+    let debut_norm = format_utc_canonical(&debut_dt);
     conn.execute_batch("BEGIN IMMEDIATE")?;
     let insert = (|| {
         assert_no_overlap(conn, &debut_norm, duree_minutes, None)?;
@@ -621,7 +620,6 @@ pub fn rdv_update(
     duree_minutes: i64,
     note: Option<String>,
 ) -> Result<Rdv, AppError> {
-    ensure_migrated(conn)?;
     if duree_minutes <= 0 {
         return Err(AppError::new("duree_minutes doit etre positif"));
     }
@@ -631,7 +629,8 @@ pub fn rdv_update(
         return Err(AppError::new("rdv non modifiable"));
     }
 
-    let debut_norm = parse_debut_utc(debut)?.to_rfc3339();
+    let debut_dt = parse_debut_utc(debut)?;
+    let debut_norm = format_utc_canonical(&debut_dt);
     let tarif_changed = existing.tarif_id != tarif_id;
     conn.execute_batch("BEGIN IMMEDIATE")?;
     let updated = (|| {
@@ -757,7 +756,6 @@ pub fn rdv_list(
     to: Option<&str>,
     client_id: Option<&str>,
 ) -> Result<Vec<Rdv>, AppError> {
-    ensure_migrated(conn)?;
     if let Some(cid) = client_id {
         let sql = format!("{RDV_SELECT} WHERE rdv.client_id = ?1 ORDER BY rdv.debut");
         let mut stmt = conn.prepare(&sql)?;
@@ -771,42 +769,39 @@ pub fn rdv_list(
     let to = to.ok_or_else(|| AppError::new("to requis"))?;
     let from_dt = parse_debut_utc(from)?;
     let to_dt = parse_debut_utc(to)?;
-    let sql = format!("{RDV_SELECT} WHERE rdv.statut = 'planifie' ORDER BY rdv.debut");
+    let from_norm = format_utc_canonical(&from_dt);
+    let to_norm = format_utc_canonical(&to_dt);
+
+    let sql = format!(
+        "{RDV_SELECT} WHERE rdv.statut = 'planifie' AND rdv.debut >= ?1 AND rdv.debut < ?2 ORDER BY rdv.debut"
+    );
     let mut stmt = conn.prepare(&sql)?;
     let rdvs = stmt
-        .query_map([], row_to_rdv)?
+        .query_map(params![from_norm, to_norm], row_to_rdv)?
         .collect::<Result<Vec<_>, _>>()?;
-    let rdvs = rdvs
-        .into_iter()
-        .filter(|r| rdv_debut_in_range(&r.debut, from_dt, to_dt))
-        .collect();
     Ok(rdvs)
 }
 
 pub fn rdv_dashboard(conn: &Connection, now: DateTime<Utc>) -> Result<Dashboard, AppError> {
-    ensure_migrated(conn)?;
     let (day_start, day_end) = local_day_bounds(now);
-    let sql = format!("{RDV_SELECT} WHERE rdv.statut = 'planifie' ORDER BY rdv.debut");
-    let mut stmt = conn.prepare(&sql)?;
-    let all = stmt
-        .query_map([], row_to_rdv)?
+    let day_start_norm = format_utc_canonical(&day_start);
+    let day_end_norm = format_utc_canonical(&day_end);
+
+    let aujourdhui_sql = format!(
+        "{RDV_SELECT} WHERE rdv.statut = 'planifie' AND rdv.debut >= ?1 AND rdv.debut < ?2 ORDER BY rdv.debut"
+    );
+    let mut stmt = conn.prepare(&aujourdhui_sql)?;
+    let aujourdhui = stmt
+        .query_map(params![day_start_norm, day_end_norm], row_to_rdv)?
         .collect::<Result<Vec<_>, _>>()?;
 
-    let aujourdhui = all
-        .iter()
-        .filter(|r| rdv_debut_in_range(&r.debut, day_start, day_end))
-        .cloned()
-        .collect();
-
-    let a_venir = all
-        .into_iter()
-        .filter(|r| {
-            parse_debut_utc(&r.debut)
-                .map(|d| d >= day_end)
-                .unwrap_or(false)
-        })
-        .take(5)
-        .collect();
+    let a_venir_sql = format!(
+        "{RDV_SELECT} WHERE rdv.statut = 'planifie' AND rdv.debut >= ?1 ORDER BY rdv.debut LIMIT 5"
+    );
+    let mut stmt = conn.prepare(&a_venir_sql)?;
+    let a_venir = stmt
+        .query_map(params![day_end_norm], row_to_rdv)?
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(Dashboard {
         aujourdhui,
@@ -817,7 +812,7 @@ pub fn rdv_dashboard(conn: &Connection, now: DateTime<Utc>) -> Result<Dashboard,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::open_memory;
+    use crate::db::{migrate, open_memory};
 
     #[test]
     fn clients_upsert_roundtrip_adresse() {

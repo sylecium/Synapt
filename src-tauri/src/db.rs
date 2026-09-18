@@ -95,7 +95,38 @@ CREATE TABLE IF NOT EXISTS honoraire_lignes (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_honoraire_lignes_rdv_actif
   ON honoraire_lignes(rdv_id) WHERE actif = 1;
+CREATE INDEX IF NOT EXISTS idx_rdv_statut_debut ON rdv(statut, debut);
+CREATE INDEX IF NOT EXISTS idx_rdv_client ON rdv(client_id);
+CREATE INDEX IF NOT EXISTS idx_notes_client ON notes(client_id);
 ";
+
+use std::sync::Mutex;
+
+pub struct DbState(pub Mutex<Connection>);
+
+impl DbState {
+    pub fn new(conn: Connection) -> Self {
+        Self(Mutex::new(conn))
+    }
+
+    pub fn with_conn<F, T>(&self, f: F) -> Result<T, AppError>
+    where
+        F: FnOnce(&Connection) -> Result<T, AppError>,
+    {
+        let conn = self
+            .0
+            .lock()
+            .map_err(|_| AppError::new("base de donnees verrouillee"))?;
+        f(&conn)
+    }
+}
+
+pub fn init_db() -> Result<Connection, AppError> {
+    let path = db_path()?;
+    let conn = open_file(&path)?;
+    migrate(&conn)?;
+    Ok(conn)
+}
 
 fn configure_connection(conn: &Connection) -> Result<(), AppError> {
     conn.busy_timeout(std::time::Duration::from_millis(5000))?;
@@ -213,6 +244,15 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
     }
     add_column_if_missing(conn, "tarifs", "prix_ttc", "INTEGER NOT NULL DEFAULT 1")?;
     make_rdv_client_id_nullable(conn)?;
+    conn.execute_batch(
+        r"
+        CREATE INDEX IF NOT EXISTS idx_rdv_statut_debut ON rdv(statut, debut);
+        CREATE INDEX IF NOT EXISTS idx_rdv_client ON rdv(client_id);
+        CREATE INDEX IF NOT EXISTS idx_notes_client ON notes(client_id);
+        UPDATE rdv SET debut = strftime('%Y-%m-%dT%H:%M:%S+00:00', debut)
+        WHERE debut IS NOT NULL AND debut NOT LIKE '%+00:00';
+        ",
+    )?;
     Ok(())
 }
 
@@ -374,5 +414,22 @@ mod tests {
         migrate(&conn).unwrap();
         let cols = table_columns(&conn, "clients").unwrap();
         assert!(cols.contains(&"adresse".to_string()));
+    }
+
+    #[test]
+    fn migrate_creates_indexes() {
+        let conn = open_memory().unwrap();
+        migrate(&conn).unwrap();
+        let mut stmt = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
+            .unwrap();
+        let names: Vec<String> = stmt
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+        assert!(names.contains(&"idx_rdv_statut_debut".to_string()));
+        assert!(names.contains(&"idx_rdv_client".to_string()));
+        assert!(names.contains(&"idx_notes_client".to_string()));
     }
 }
