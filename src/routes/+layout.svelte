@@ -7,6 +7,7 @@
 	import AppSidebar from '$lib/components/AppSidebar.svelte';
 	import UpdateBanner from '$lib/components/UpdateBanner.svelte';
 	import { flushAllDebouncedNotes } from '$lib/debouncedNoteSave';
+	import { appClose } from '$lib/api';
 
 	let { children } = $props();
 
@@ -16,11 +17,21 @@
 			try {
 				const { getCurrentWindow } = await import('@tauri-apps/api/window');
 				const win = getCurrentWindow();
-				unlisten = await win.onCloseRequested(async () => {
-					await Promise.race([
-						flushAllDebouncedNotes(),
-						new Promise((resolve) => setTimeout(resolve, 1500))
-					]);
+				unlisten = await win.onCloseRequested(async (event) => {
+					event.preventDefault();
+					try {
+						await Promise.race([
+							flushAllDebouncedNotes(),
+							new Promise((resolve) => setTimeout(resolve, 1500))
+						]);
+					} finally {
+						try {
+							await win.destroy();
+						} catch {
+							// Repli
+						}
+						await appClose();
+					}
 				});
 			} catch {
 				// Environnement hors Tauri (tests, ssr)

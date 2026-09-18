@@ -35,13 +35,14 @@ impl ReqwestNtfy {
         jitsi_url: &str,
         kind: RappelKind,
     ) -> Self {
+        let local_debut = debut.with_timezone(&chrono::Local);
         let (title, message, priority) = match kind {
             RappelKind::H24 => (
                 "Rappel RDV demain".to_string(),
                 if client_nom.is_empty() {
-                    format!("RDV le {}", debut.format("%d/%m %H:%M"))
+                    format!("RDV le {}", local_debut.format("%d/%m %H:%M"))
                 } else {
-                    format!("RDV avec {} le {}", client_nom, debut.format("%d/%m %H:%M"))
+                    format!("RDV avec {} le {}", client_nom, local_debut.format("%d/%m %H:%M"))
                 },
                 4,
             ),
@@ -62,6 +63,14 @@ impl ReqwestNtfy {
             click: jitsi_url.to_string(),
             priority,
         }
+    }
+
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
     }
 }
 
@@ -243,5 +252,21 @@ mod tests {
         let now = Utc.with_ymd_and_hms(2026, 9, 1, 0, 0, 0).unwrap();
         let e = now + chrono::Duration::hours(1);
         assert!(!should_publish("", true, "planifie", now, e, false));
+    }
+
+    #[test]
+    fn for_rdv_heure_locale() {
+        let settings = Settings::default();
+        let debut = chrono::DateTime::parse_from_rfc3339("2026-09-12T14:30:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let ntfy = ReqwestNtfy::for_rdv(&settings, "Martin", debut, "", RappelKind::H24);
+        let local_debut = debut.with_timezone(&chrono::Local);
+        let expected_msg = format!("RDV avec Martin le {}", local_debut.format("%d/%m %H:%M"));
+        assert_eq!(ntfy.message(), expected_msg);
+
+        let ntfy_sans_client = ReqwestNtfy::for_rdv(&settings, "", debut, "", RappelKind::H24);
+        let expected_sans_client = format!("RDV le {}", local_debut.format("%d/%m %H:%M"));
+        assert_eq!(ntfy_sans_client.message(), expected_sans_client);
     }
 }

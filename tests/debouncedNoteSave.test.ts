@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'bun:test';
-import { createDebouncedNoteSave, flushAllDebouncedNotes } from '../src/lib/debouncedNoteSave';
+import { createDebouncedNoteSave, flushAllDebouncedNotes, registerDebouncedFlush } from '../src/lib/debouncedNoteSave';
 import type { Note } from '../src/lib/types';
 
 function note(id: string, corps = 'x'): Note {
@@ -94,5 +94,26 @@ describe('createDebouncedNoteSave', () => {
 		saver.destroy();
 		await flushAllDebouncedNotes();
 		expect(save).not.toHaveBeenCalled();
+	});
+});
+
+describe('registerDebouncedFlush', () => {
+	test('enregistre un flush appelé par flushAllDebouncedNotes', async () => {
+		const customFlush = mock(async () => {});
+		const unregister = registerDebouncedFlush(customFlush);
+
+		await flushAllDebouncedNotes();
+		expect(customFlush).toHaveBeenCalledTimes(1);
+
+		unregister();
+	});
+
+	test('désinscrit le flush via la fonction de retour', async () => {
+		const customFlush = mock(async () => {});
+		const unregister = registerDebouncedFlush(customFlush);
+
+		unregister();
+		await flushAllDebouncedNotes();
+		expect(customFlush).not.toHaveBeenCalled();
 	});
 });

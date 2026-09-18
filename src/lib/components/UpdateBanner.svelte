@@ -6,6 +6,7 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { installUpdateMessage } from '$lib/updater-errors';
 	import { probeUpdate, UPDATE_CHECK_INTERVAL_MS } from '$lib/updater';
+	import { flushAllDebouncedNotes } from '$lib/debouncedNoteSave';
 
 	let update = $state<Update | null>(null);
 	let dismissed = $state(false);
@@ -51,6 +52,7 @@
 					}
 				}
 			});
+			await flushAllDebouncedNotes();
 			await relaunch();
 		} catch (e) {
 			toast.error(installUpdateMessage(e));

@@ -11,6 +11,7 @@
 	import { formatTarifPrix, formatTime, rdvClientLabel } from '$lib/format';
 	import { noteIsEmpty } from '$lib/notesHtml';
 	import { userMessage } from '$lib/errors';
+	import { registerDebouncedFlush } from '$lib/debouncedNoteSave';
 	import { findHonoraireEmisForRdv } from '$lib/honoraireRdv';
 	import {
 		cancelRdv as cancelRdvAction,
@@ -93,7 +94,10 @@
 		});
 	});
 
+	const unregisterFlush = registerDebouncedFlush(flushNote);
+
 	onDestroy(() => {
+		unregisterFlush();
 		void flushNote();
 	});
 

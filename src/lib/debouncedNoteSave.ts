@@ -8,6 +8,13 @@ export async function flushAllDebouncedNotes(): Promise<void> {
 	await Promise.all(Array.from(activeFlushes).map((flush) => flush().catch(() => {})));
 }
 
+export function registerDebouncedFlush(flush: () => Promise<void>): () => void {
+	activeFlushes.add(flush);
+	return () => {
+		activeFlushes.delete(flush);
+	};
+}
+
 export function createDebouncedNoteSave(opts: {
 	getNote: (id: string) => Note | undefined;
 	save: (note: Note) => Promise<Note>;
@@ -36,7 +43,7 @@ export function createDebouncedNoteSave(opts: {
 		}
 	}
 
-	activeFlushes.add(flush);
+	const unregister = registerDebouncedFlush(flush);
 
 	function schedule(note: Note) {
 		pendingId = note.id;
@@ -56,7 +63,7 @@ export function createDebouncedNoteSave(opts: {
 	}
 
 	function destroy() {
-		activeFlushes.delete(flush);
+		unregister();
 	}
 
 	return { flush, schedule, cancel, destroy };

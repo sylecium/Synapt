@@ -739,6 +739,14 @@ pub fn honoraires_rdvs_disponibles(
         .map_err(|e| e.message)
 }
 
+#[tauri::command(rename_all = "snake_case")]
+pub fn app_close(window: tauri::Window) {
+    use tauri::Manager;
+    let app = window.app_handle().clone();
+    let _ = window.destroy();
+    app.exit(0);
+}
+
 pub fn run_ntfy_sync(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let db = app.state::<DbState>();

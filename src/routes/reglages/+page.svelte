@@ -1,6 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
+	import BuildingIcon from '@lucide/svelte/icons/building';
+	import BellIcon from '@lucide/svelte/icons/bell';
+	import CreditCardIcon from '@lucide/svelte/icons/credit-card';
+	import SendIcon from '@lucide/svelte/icons/send';
+	import CheckIcon from '@lucide/svelte/icons/check';
 	import { ntfyTest, settingsGet, settingsSet } from '$lib/api';
 	import { userMessage } from '$lib/errors';
 	import type { SettingsPublic } from '$lib/types';
@@ -11,6 +16,8 @@
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
 	import { Switch } from '$lib/components/ui/switch/index.js';
+	import { Separator } from '$lib/components/ui/separator/index.js';
+	import { Badge } from '$lib/components/ui/badge/index.js';
 
 	const mentionTvaDefaut = 'TVA au taux normal de 20 % (CGI, art. 278)';
 
@@ -98,109 +105,219 @@
 	}
 </script>
 
-<div class="flex flex-col gap-4 p-4">
+<div class="flex flex-col gap-6 p-4 max-w-3xl">
 	<PageHeader title="Réglages" />
 
 	{#if !loaded}
-		<Skeleton class="h-64 max-w-lg" />
+		<div class="flex flex-col gap-6">
+			<Skeleton class="h-64 w-full rounded-xl" />
+			<Skeleton class="h-64 w-full rounded-xl" />
+			<Skeleton class="h-40 w-full rounded-xl" />
+		</div>
 	{:else}
-		<section class="flex max-w-lg flex-col gap-4">
-			<h2 class="text-sm font-medium">Cabinet</h2>
-			<div class="flex flex-col gap-2">
-				<Label for="cab-nom">Nom</Label>
-				<Input id="cab-nom" bind:value={cabinetNom} />
+		<!-- Section Cabinet -->
+		<section class="flex flex-col gap-5 rounded-xl border bg-card p-5 sm:p-6 shadow-xs">
+			<div class="flex items-start justify-between gap-4">
+				<div class="flex items-center gap-3">
+					<div class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+						<BuildingIcon class="size-4" />
+					</div>
+					<div>
+						<h2 class="text-base font-semibold tracking-tight text-foreground">Cabinet</h2>
+						<p class="text-xs text-muted-foreground">
+							Coordonnées professionnelles et mentions légales pour vos notes d'honoraires.
+						</p>
+					</div>
+				</div>
 			</div>
-			<div class="flex flex-col gap-2">
-				<Label for="cab-adresse">Adresse</Label>
-				<Textarea id="cab-adresse" bind:value={cabinetAdresse} rows={3} />
-			</div>
-			<div class="flex flex-col gap-2">
-				<Label for="cab-telephone">Téléphone</Label>
-				<Input id="cab-telephone" type="tel" bind:value={cabinetTelephone} />
-			</div>
-			<div class="flex flex-col gap-2">
-				<Label for="cab-email">Email</Label>
-				<Input id="cab-email" type="email" bind:value={cabinetEmail} />
-			</div>
-			<div class="flex flex-col gap-2">
-				<Label for="cab-siret">SIRET</Label>
-				<Input id="cab-siret" bind:value={cabinetSiret} />
-			</div>
-			<div class="flex flex-col gap-2">
-				<Label for="cab-mention-tva">Mention TVA</Label>
-				<Input id="cab-mention-tva" bind:value={mentionTva} />
-			</div>
-			<div class="flex flex-col gap-2">
-				<Label for="cab-prefixe">Préfixe numéro</Label>
-				<Input id="cab-prefixe" bind:value={prefixeNumero} />
-				<p class="text-muted-foreground text-xs">
-					Vide = 2026-0001. Exemple NH → NH-2026-0001.
+
+			<Separator />
+
+			<div class="flex flex-col gap-4">
+				<div class="flex flex-col gap-2">
+					<Label for="cab-nom">Nom du cabinet ou praticien</Label>
+					<Input id="cab-nom" bind:value={cabinetNom} placeholder="Ex: Dr. Jane Doe" />
+				</div>
+
+				<div class="flex flex-col gap-2">
+					<Label for="cab-adresse">Adresse professionnelle</Label>
+					<Textarea
+						id="cab-adresse"
+						bind:value={cabinetAdresse}
+						rows={3}
+						placeholder="Numéro, voie, code postal et ville"
+					/>
+				</div>
+
+				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+					<div class="flex flex-col gap-2">
+						<Label for="cab-telephone">Téléphone</Label>
+						<Input id="cab-telephone" type="tel" bind:value={cabinetTelephone} placeholder="06 00 00 00 00" />
+					</div>
+					<div class="flex flex-col gap-2">
+						<Label for="cab-email">Email</Label>
+						<Input id="cab-email" type="email" bind:value={cabinetEmail} placeholder="contact@cabinet.fr" />
+					</div>
+				</div>
+
+				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+					<div class="flex flex-col gap-2">
+						<Label for="cab-siret">Numéro SIRET</Label>
+						<Input id="cab-siret" bind:value={cabinetSiret} placeholder="14 chiffres" />
+					</div>
+					<div class="flex flex-col gap-2">
+						<Label for="cab-prefixe">Préfixe de numérotation</Label>
+						<Input id="cab-prefixe" bind:value={prefixeNumero} placeholder="Ex: NH" />
+					</div>
+				</div>
+				<p class="-mt-2 text-xs text-muted-foreground">
+					Préfixe optionnel pour les numéros de notes d'honoraires. Exemple NH - 2026-0001 (vide = 2026-0001).
 				</p>
+
+				<div class="flex flex-col gap-2">
+					<Label for="cab-mention-tva">Mention légale TVA</Label>
+					<Input id="cab-mention-tva" bind:value={mentionTva} />
+					<p class="text-xs text-muted-foreground">
+						Mention obligatoire affichée en pied de note. Défaut : {mentionTvaDefaut}.
+					</p>
+				</div>
 			</div>
 		</section>
 
-		<section class="flex max-w-lg flex-col gap-4">
-			<h2 class="text-sm font-medium">ntfy</h2>
-			<div class="flex flex-col gap-2">
-				<Label for="ntfy-serveur">Serveur</Label>
-				<Input id="ntfy-serveur" bind:value={ntfyServeur} />
-			</div>
-			<div class="flex flex-col gap-2">
-				<Label for="ntfy-topic">Topic</Label>
-				<Input id="ntfy-topic" bind:value={ntfyTopic} />
-				<p class="text-muted-foreground text-xs">
-					Nom secret du canal. Sans topic, les rappels téléphone sont coupés.
-				</p>
-			</div>
-			<div class="flex flex-col gap-2">
-				<Label for="ntfy-token">Token</Label>
-				<Input
-					id="ntfy-token"
-					type="password"
-					bind:value={ntfyToken}
-					placeholder={secretPlaceholder(loaded.ntfy_token_configured, loaded.ntfy_token_last4)}
-				/>
-				<p class="text-muted-foreground text-xs">Optionnel, si le serveur ntfy l’exige.</p>
-				{#if loaded.ntfy_token_configured}
-					<label class="flex items-center gap-2 text-sm">
-						<input type="checkbox" bind:checked={ntfyTokenClear} />
-						Effacer le token enregistré
-					</label>
+		<!-- Section ntfy -->
+		<section class="flex flex-col gap-5 rounded-xl border bg-card p-5 sm:p-6 shadow-xs">
+			<div class="flex items-start justify-between gap-4">
+				<div class="flex items-center gap-3">
+					<div class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+						<BellIcon class="size-4" />
+					</div>
+					<div>
+						<h2 class="text-base font-semibold tracking-tight text-foreground">Rappels ntfy</h2>
+						<p class="text-xs text-muted-foreground">
+							Notifications instantanées et rappels automatiques des consultations sur votre téléphone.
+						</p>
+					</div>
+				</div>
+				{#if ntfyTopic.trim()}
+					<Badge variant="secondary">Actif</Badge>
+				{:else}
+					<Badge variant="outline" class="text-muted-foreground">Désactivé</Badge>
 				{/if}
 			</div>
-			<div class="flex items-center gap-2">
-				<Switch id="rappel-24h" bind:checked={rappel24h} />
-				<Label for="rappel-24h">Rappel 24 h</Label>
+
+			<Separator />
+
+			<div class="flex flex-col gap-4">
+				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+					<div class="flex flex-col gap-2">
+						<Label for="ntfy-serveur">Serveur ntfy</Label>
+						<Input id="ntfy-serveur" bind:value={ntfyServeur} placeholder="https://ntfy.sh" />
+					</div>
+					<div class="flex flex-col gap-2">
+						<Label for="ntfy-topic">Topic secret</Label>
+						<Input id="ntfy-topic" bind:value={ntfyTopic} placeholder="mon-cabinet-secret-..." />
+					</div>
+				</div>
+				<p class="-mt-2 text-xs text-muted-foreground">
+					Nom secret de votre canal de notification. Sans topic, les rappels sont suspendus.
+				</p>
+
+				<div class="flex flex-col gap-2">
+					<Label for="ntfy-token">Token d'accès (optionnel)</Label>
+					<Input
+						id="ntfy-token"
+						type="password"
+						bind:value={ntfyToken}
+						placeholder={secretPlaceholder(loaded.ntfy_token_configured, loaded.ntfy_token_last4)}
+					/>
+					<p class="text-xs text-muted-foreground">Requis uniquement si votre serveur ntfy exige une authentification.</p>
+					{#if loaded.ntfy_token_configured}
+						<label class="flex items-center gap-2 pt-1 text-sm">
+							<input type="checkbox" bind:checked={ntfyTokenClear} class="rounded border-input text-primary" />
+							<span>Effacer le token actuellement enregistré</span>
+						</label>
+					{/if}
+				</div>
+
+				<div class="flex flex-col gap-3 rounded-lg border bg-muted/30 p-3.5">
+					<div class="flex items-center justify-between gap-4">
+						<div class="flex flex-col">
+							<Label for="rappel-24h" class="cursor-pointer font-medium text-foreground">Rappel 24 h avant</Label>
+							<span class="text-xs text-muted-foreground">Notification envoyée la veille de la consultation</span>
+						</div>
+						<Switch id="rappel-24h" bind:checked={rappel24h} />
+					</div>
+					<Separator />
+					<div class="flex items-center justify-between gap-4">
+						<div class="flex flex-col">
+							<Label for="rappel-1h" class="cursor-pointer font-medium text-foreground">Rappel 1 h avant</Label>
+							<span class="text-xs text-muted-foreground">Notification envoyée une heure avant la consultation</span>
+						</div>
+						<Switch id="rappel-1h" bind:checked={rappel1h} />
+					</div>
+				</div>
+
+				<div class="flex items-center justify-between pt-1">
+					<p class="text-xs text-muted-foreground">Testez l'envoi vers l'application ntfy de votre téléphone.</p>
+					<Button variant="outline" size="sm" onclick={testNtfy} disabled={testing}>
+						<SendIcon class="mr-1.5 size-3.5" />
+						{testing ? 'Envoi en cours...' : 'Tester la notification'}
+					</Button>
+				</div>
 			</div>
-			<div class="flex items-center gap-2">
-				<Switch id="rappel-1h" bind:checked={rappel1h} />
-				<Label for="rappel-1h">Rappel 1 h</Label>
-			</div>
-			<Button variant="outline" onclick={testNtfy} disabled={testing}>Tester</Button>
 		</section>
 
-		<section class="flex max-w-lg flex-col gap-4">
-			<h2 class="text-sm font-medium">Stripe</h2>
-			<div class="flex flex-col gap-2">
-				<Label for="stripe-key">Clé secrète</Label>
-				<Input
-					id="stripe-key"
-					type="password"
-					bind:value={stripeSecretKey}
-					placeholder={secretPlaceholder(loaded.stripe_configured, loaded.stripe_last4)}
-				/>
-				<p class="text-muted-foreground text-xs">
-					Collez une clé secrète sk_…. Elle reste sur cette machine.
-				</p>
+		<!-- Section Stripe -->
+		<section class="flex flex-col gap-5 rounded-xl border bg-card p-5 sm:p-6 shadow-xs">
+			<div class="flex items-start justify-between gap-4">
+				<div class="flex items-center gap-3">
+					<div class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+						<CreditCardIcon class="size-4" />
+					</div>
+					<div>
+						<h2 class="text-base font-semibold tracking-tight text-foreground">Paiements Stripe</h2>
+						<p class="text-xs text-muted-foreground">
+							Génération automatique des liens de paiement sécurisés pour les téléconsultations.
+						</p>
+					</div>
+				</div>
 				{#if loaded.stripe_configured}
-					<label class="flex items-center gap-2 text-sm">
-						<input type="checkbox" bind:checked={stripeSecretClear} />
-						Effacer la clé enregistrée
-					</label>
+					<Badge variant="secondary">Configuré</Badge>
+				{:else}
+					<Badge variant="outline" class="text-muted-foreground">Non configuré</Badge>
 				{/if}
+			</div>
+
+			<Separator />
+
+			<div class="flex flex-col gap-4">
+				<div class="flex flex-col gap-2">
+					<Label for="stripe-key">Clé secrète API</Label>
+					<Input
+						id="stripe-key"
+						type="password"
+						bind:value={stripeSecretKey}
+						placeholder={secretPlaceholder(loaded.stripe_configured, loaded.stripe_last4)}
+					/>
+					<p class="text-xs text-muted-foreground">
+						Clé secrète commençant par sk_... stockée localement sur ce poste.
+					</p>
+					{#if loaded.stripe_configured}
+						<label class="flex items-center gap-2 pt-1 text-sm">
+							<input type="checkbox" bind:checked={stripeSecretClear} class="rounded border-input text-primary" />
+							<span>Effacer la clé secrète actuellement enregistrée</span>
+						</label>
+					{/if}
+				</div>
 			</div>
 		</section>
 
-		<Button onclick={save} disabled={saving}>Enregistrer</Button>
+		<!-- Action Enregistrer -->
+		<div class="flex items-center justify-end pt-2 pb-8">
+			<Button onclick={save} disabled={saving} class="min-w-40">
+				<CheckIcon class="mr-1.5 size-4" />
+				{saving ? 'Enregistrement...' : 'Enregistrer les réglages'}
+			</Button>
+		</div>
 	{/if}
 </div>

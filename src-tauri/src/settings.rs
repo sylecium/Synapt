@@ -1,6 +1,6 @@
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -136,42 +136,106 @@ pub fn settings_path() -> PathBuf {
         .join("settings.json")
 }
 
-pub fn load_settings() -> Settings {
-    let path = settings_path();
-    let contents = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(_) => return Settings::default(),
-    };
-    serde_json::from_str(&contents).unwrap_or_default()
+pub fn load_settings_from_path(path: &Path) -> Settings {
+    let mut bak_path = path.to_path_buf();
+    bak_path.as_mut_os_string().push(".bak");
+
+    if let Ok(contents) = std::fs::read_to_string(path) {
+        match serde_json::from_str::<Settings>(&contents) {
+            Ok(s) => return s,
+            Err(e) => {
+                log::warn!(
+                    "Fichier de réglages {:?} invalide ({}), tentative depuis {:?}",
+                    path,
+                    e,
+                    bak_path
+                );
+            }
+        }
+    }
+
+    if let Ok(bak_contents) = std::fs::read_to_string(&bak_path) {
+        match serde_json::from_str::<Settings>(&bak_contents) {
+            Ok(s) => {
+                log::warn!(
+                    "Réglages restaurés avec succès depuis la copie de sauvegarde {:?}",
+                    bak_path
+                );
+                return s;
+            }
+            Err(e) => {
+                log::error!(
+                    "Échec de lecture de la copie de sauvegarde {:?}: {}",
+                    bak_path,
+                    e
+                );
+            }
+        }
+    }
+
+    Settings::default()
 }
 
-pub fn save_settings(s: &Settings) -> Result<(), AppError> {
-    let path = settings_path();
+pub fn save_settings_to_path(s: &Settings, path: &Path) -> Result<(), AppError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let json = serde_json::to_string_pretty(s).map_err(|e| AppError::new(e.to_string()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
+    let mut tmp_path = path.to_path_buf();
+    tmp_path.as_mut_os_string().push(".tmp");
+    let mut bak_path = path.to_path_buf();
+    bak_path.as_mut_os_string().push(".bak");
+
+    let write_res = (|| -> Result<(), std::io::Error> {
+        #[cfg(unix)]
+        let mut file = {
+            use std::os::unix::fs::OpenOptionsExt;
+            OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&tmp_path)?
+        };
+        #[cfg(not(unix))]
         let mut file = OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
-            .mode(0o600)
-            .open(&path)?;
+            .open(&tmp_path)?;
+
         file.write_all(json.as_bytes())?;
+        file.flush()?;
+        file.sync_all()?;
+        Ok(())
+    })();
+
+    if let Err(e) = write_res {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(AppError::new(format!("Échec d'écriture des réglages: {}", e)));
     }
-    #[cfg(not(unix))]
-    {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&path)?;
-        file.write_all(json.as_bytes())?;
+
+    if path.exists() {
+        let _ = std::fs::copy(path, &bak_path);
     }
+
+    if let Err(e) = std::fs::rename(&tmp_path, path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(AppError::new(format!(
+            "Échec de renommage atomique des réglages: {}",
+            e
+        )));
+    }
+
     Ok(())
+}
+
+pub fn load_settings() -> Settings {
+    load_settings_from_path(&settings_path())
+}
+
+pub fn save_settings(s: &Settings) -> Result<(), AppError> {
+    save_settings_to_path(s, &settings_path())
 }
 
 pub fn mask_secret(s: &str) -> (bool, String) {
@@ -214,5 +278,74 @@ mod tests {
         let (ok2, last2) = mask_secret("");
         assert!(!ok2);
         assert_eq!(last2, "");
+    }
+
+    #[test]
+    fn save_and_load_settings_atomique_et_backup() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("synapt_test_settings_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let path = temp_dir.join("settings.json");
+
+        let mut s1 = Settings::default();
+        s1.cabinet.nom = "Dr. Test".to_string();
+        save_settings_to_path(&s1, &path).expect("save 1 ok");
+
+        assert!(path.exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+        let loaded1 = load_settings_from_path(&path);
+        assert_eq!(loaded1.cabinet.nom, "Dr. Test");
+
+        let mut s2 = s1.clone();
+        s2.cabinet.nom = "Dr. Modifié".to_string();
+        save_settings_to_path(&s2, &path).expect("save 2 ok");
+
+        let mut bak_path = path.clone();
+        bak_path.as_mut_os_string().push(".bak");
+        assert!(bak_path.exists());
+
+        let bak_content = std::fs::read_to_string(&bak_path).expect("read bak");
+        let bak_settings: Settings = serde_json::from_str(&bak_content).expect("parse bak");
+        assert_eq!(bak_settings.cabinet.nom, "Dr. Test");
+
+        let loaded2 = load_settings_from_path(&path);
+        assert_eq!(loaded2.cabinet.nom, "Dr. Modifié");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn load_settings_fallback_sur_corruption() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("synapt_test_settings_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let path = temp_dir.join("settings.json");
+
+        let mut s1 = Settings::default();
+        s1.cabinet.nom = "Version Secours".to_string();
+        save_settings_to_path(&s1, &path).unwrap();
+
+        let mut s2 = s1.clone();
+        s2.cabinet.nom = "Version Courante".to_string();
+        save_settings_to_path(&s2, &path).unwrap();
+
+        std::fs::write(&path, "{ corrupt json ...").unwrap();
+
+        let recovered = load_settings_from_path(&path);
+        assert_eq!(recovered.cabinet.nom, "Version Secours");
+
+        let mut bak_path = path.clone();
+        bak_path.as_mut_os_string().push(".bak");
+        std::fs::write(&bak_path, "not json either").unwrap();
+
+        let fallback = load_settings_from_path(&path);
+        assert_eq!(fallback.cabinet.nom, "");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
