@@ -99,6 +99,7 @@ pub fn run() {
             commands::honoraires_ouvrir,
             commands::honoraires_annuler,
             commands::honoraires_rdvs_disponibles,
+            commands::honoraires_get_for_rdv,
             commands::app_close,
         ])
         .run(tauri::generate_context!())

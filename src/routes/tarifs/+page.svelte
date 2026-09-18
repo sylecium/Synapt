@@ -58,12 +58,22 @@
 	}
 
 	async function save() {
+		const nomTrim = nom.trim();
+		if (!nomTrim) {
+			toast.error('Le nom du tarif est requis.');
+			return;
+		}
+		const duree = Number.parseInt(dureeMinutes, 10);
+		if (!Number.isFinite(duree) || duree <= 0) {
+			toast.error('La durée doit être supérieure à 0 minute.');
+			return;
+		}
 		saving = true;
 		try {
 			await tarifsUpsert({
 				id: editing?.id,
-				nom,
-				duree_minutes: Number.parseInt(dureeMinutes, 10),
+				nom: nomTrim,
+				duree_minutes: duree,
 				prix_centimes: eurosToCentimes(prixEuros),
 				prix_ttc: prixTtc
 			});

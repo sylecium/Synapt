@@ -127,4 +127,7 @@ export const honorairesAnnuler = (id: string) => invoke<HonoraireDetail>('honora
 export const honorairesRdvsDisponibles = (client_id: string) =>
 	invoke<Rdv[]>('honoraires_rdvs_disponibles', { client_id });
 
+export const honorairesGetForRdv = (rdv_id: string) =>
+	invoke<Honoraire | null>('honoraires_get_for_rdv', { rdv_id });
+
 export const appClose = () => invoke<void>('app_close');

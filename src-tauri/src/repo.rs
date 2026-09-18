@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone, Utc};
+use chrono::{Datelike, DateTime, Duration, Local, NaiveDate, TimeZone, Utc};
 use rusqlite::{params, Connection, Row};
 use uuid::Uuid;
 
@@ -166,6 +166,25 @@ fn local_day_bounds(now: DateTime<Utc>) -> (DateTime<Utc>, DateTime<Utc>) {
         .with_timezone(&Utc);
     let end_utc = Local
         .from_local_datetime(&day_end)
+        .single()
+        .unwrap()
+        .with_timezone(&Utc);
+    (start_utc, end_utc)
+}
+
+fn local_week_bounds(now: DateTime<Utc>) -> (DateTime<Utc>, DateTime<Utc>) {
+    let local = now.with_timezone(&Local);
+    let days_from_monday = local.weekday().num_days_from_monday() as i64;
+    let week_start_date = local.date_naive() - Duration::days(days_from_monday);
+    let week_start = week_start_date.and_hms_opt(0, 0, 0).unwrap();
+    let week_end = week_start + Duration::days(7);
+    let start_utc = Local
+        .from_local_datetime(&week_start)
+        .single()
+        .unwrap()
+        .with_timezone(&Utc);
+    let end_utc = Local
+        .from_local_datetime(&week_end)
         .single()
         .unwrap()
         .with_timezone(&Utc);
@@ -803,9 +822,24 @@ pub fn rdv_dashboard(conn: &Connection, now: DateTime<Utc>) -> Result<Dashboard,
         .query_map(params![day_end_norm], row_to_rdv)?
         .collect::<Result<Vec<_>, _>>()?;
 
+    let clients_count: i64 = conn.query_row("SELECT COUNT(*) FROM clients", [], |row| row.get(0))?;
+    let tarifs_count: i64 = conn.query_row("SELECT COUNT(*) FROM tarifs", [], |row| row.get(0))?;
+
+    let (week_start, week_end) = local_week_bounds(now);
+    let week_start_norm = format_utc_canonical(&week_start);
+    let week_end_norm = format_utc_canonical(&week_end);
+    let week_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM rdv WHERE statut = 'planifie' AND debut >= ?1 AND debut < ?2",
+        params![week_start_norm, week_end_norm],
+        |row| row.get(0),
+    )?;
+
     Ok(Dashboard {
         aujourdhui,
         a_venir,
+        clients_count,
+        tarifs_count,
+        week_count,
     })
 }
 
@@ -836,7 +870,6 @@ mod tests {
     fn clients_delete_refuse_si_honoraire() {
         use crate::honoraires::honoraires_create;
         use crate::settings::CabinetSettings;
-        use std::path::PathBuf;
 
         let conn = open_memory().unwrap();
         migrate(&conn).unwrap();
@@ -857,14 +890,14 @@ mod tests {
             None,
         )
         .unwrap();
-        let dir = PathBuf::from(std::env::temp_dir())
+        let dir = std::env::temp_dir()
             .join(format!("synapt-hon-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(dir.join("honoraires")).unwrap();
         let cabinet = CabinetSettings {
             nom: "Cabinet Test".into(),
             ..Default::default()
         };
-        honoraires_create(&conn, &cabinet, &[rdv.id.clone()], "especes", &dir).unwrap();
+        honoraires_create(&conn, &cabinet, std::slice::from_ref(&rdv.id), "especes", &dir).unwrap();
         rdv_annuler(&conn, &rdv.id).unwrap();
         let err = clients_delete(&conn, &client.id).unwrap_err();
         assert_eq!(err.message, "Ce client a encore des notes d'honoraires.");
@@ -934,5 +967,34 @@ mod tests {
         migrate(&conn).unwrap();
         let err = tarifs_delete(&conn, "missing").unwrap_err();
         assert_eq!(err.message, "tarif introuvable");
+    }
+
+    #[test]
+    fn rdv_dashboard_counts_semaine_clients_tarifs() {
+        let conn = open_memory().unwrap();
+        migrate(&conn).unwrap();
+        let client = clients_upsert(
+            &conn,
+            ClientWrite {
+                nom: "Test Client".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let tarif = tarifs_upsert(&conn, None, "Séance", 45, 6000, true).unwrap();
+
+        let wednesday = Utc.with_ymd_and_hms(2026, 9, 16, 10, 0, 0).unwrap();
+
+        rdv_create(&conn, Some(&client.id), Some(tarif.id.clone()), "2026-09-16T14:00:00+00:00", 45, None).unwrap();
+        rdv_create(&conn, Some(&client.id), Some(tarif.id.clone()), "2026-09-18T14:00:00+00:00", 45, None).unwrap();
+        let rdv_annule = rdv_create(&conn, Some(&client.id), Some(tarif.id.clone()), "2026-09-18T16:00:00+00:00", 45, None).unwrap();
+        rdv_annuler(&conn, &rdv_annule.id).unwrap();
+        rdv_create(&conn, Some(&client.id), Some(tarif.id), "2026-09-23T10:00:00+00:00", 45, None).unwrap();
+
+        let dash = rdv_dashboard(&conn, wednesday).unwrap();
+        assert_eq!(dash.clients_count, 1);
+        assert_eq!(dash.tarifs_count, 1);
+        assert_eq!(dash.aujourdhui.len(), 1);
+        assert_eq!(dash.week_count, 2);
     }
 }

@@ -79,6 +79,9 @@ pub struct Note {
 pub struct Dashboard {
     pub aujourdhui: Vec<Rdv>,
     pub a_venir: Vec<Rdv>,
+    pub clients_count: i64,
+    pub tarifs_count: i64,
+    pub week_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

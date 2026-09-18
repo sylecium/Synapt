@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use chrono::{Datelike, Local};
-use rusqlite::{params, Connection, Row};
+use rusqlite::{params, Connection, OptionalExtension, Row};
 use uuid::Uuid;
 
 use crate::error::AppError;
@@ -88,6 +88,26 @@ pub fn honoraires_get(conn: &Connection, id: &str) -> Result<HonoraireDetail, Ap
         .query_map(params![id], row_to_ligne)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(HonoraireDetail { honoraire, lignes })
+}
+
+pub fn honoraires_get_for_rdv(
+    conn: &Connection,
+    rdv_id: &str,
+) -> Result<Option<Honoraire>, AppError> {
+    repo::ensure_migrated(conn)?;
+    let sql = "\
+        SELECT h.id, h.numero, h.client_id, h.client_nom, h.client_date_naissance, h.client_adresse, \
+        h.cabinet_nom, h.cabinet_adresse, h.cabinet_telephone, h.cabinet_email, h.cabinet_siret, h.mention_tva, \
+        h.moyen_paiement, h.statut, h.total_centimes, h.annee, h.seq, h.pdf_relatif, h.created_at \
+        FROM honoraires h \
+        JOIN honoraire_lignes l ON l.honoraire_id = h.id \
+        WHERE l.rdv_id = ?1 AND l.actif = 1 AND h.statut = 'emise' \
+        LIMIT 1";
+    let honoraire = conn
+        .query_row(sql, params![rdv_id], row_to_honoraire)
+        .optional()
+        .map_err(AppError::from)?;
+    Ok(honoraire)
 }
 
 fn fetch_rdv_honoraires(conn: &Connection, id: &str) -> Result<Rdv, AppError> {
@@ -470,7 +490,7 @@ mod tests {
         let rdv = seed_rdv(&conn, &client.id, Some(tarif.id), "2026-09-11T10:00:00Z");
         let dir = tempfile_dir();
         let detail =
-            honoraires_create(&conn, &cabinet_ok(), &[rdv.id.clone()], "especes", &dir).unwrap();
+            honoraires_create(&conn, &cabinet_ok(), std::slice::from_ref(&rdv.id), "especes", &dir).unwrap();
         let annee = chrono::Local::now().year();
         assert_eq!(detail.honoraire.numero, format!("{annee}-0001"));
         assert_eq!(detail.honoraire.seq, 1);
@@ -582,7 +602,7 @@ mod tests {
         .unwrap();
         let rdv = seed_rdv(&conn, &client.id, None, "2026-09-11T10:00:00Z");
         let dir = tempfile_dir();
-        honoraires_create(&conn, &cabinet_ok(), &[rdv.id.clone()], "especes", &dir).unwrap();
+        honoraires_create(&conn, &cabinet_ok(), std::slice::from_ref(&rdv.id), "especes", &dir).unwrap();
         let err = honoraires_create(&conn, &cabinet_ok(), &[rdv.id], "especes", &dir).unwrap_err();
         assert_eq!(err.message, "Cette séance a déjà une note d'honoraires.");
     }
@@ -714,7 +734,7 @@ mod tests {
         let a = seed_rdv(&conn, &client.id, None, "2026-09-11T10:00:00Z");
         let b = seed_rdv(&conn, &client.id, None, "2026-09-12T10:00:00Z");
         let dir = tempfile_dir();
-        let d1 = honoraires_create(&conn, &cabinet_ok(), &[a.id.clone()], "especes", &dir).unwrap();
+        let d1 = honoraires_create(&conn, &cabinet_ok(), std::slice::from_ref(&a.id), "especes", &dir).unwrap();
         honoraires_annuler(&conn, &d1.honoraire.id, &dir).unwrap();
         let dispo = honoraires_rdvs_disponibles(&conn, &client.id).unwrap();
         assert!(dispo.iter().any(|r| r.id == a.id));
@@ -930,5 +950,44 @@ mod tests {
         assert!(page2.contains("Total TTC"), "page 2 doit contenir Total TTC: {page2:?}");
         assert!(page2.contains("Arrêtée la présente facture"), "page 2 doit contenir la mention légale: {page2:?}");
         assert!(page2.contains("Pour acquit"), "page 2 doit contenir Pour acquit: {page2:?}");
+    }
+
+    #[test]
+    fn get_for_rdv_nominal_et_annule() {
+        let conn = crate::db::open_memory().unwrap();
+        crate::db::migrate(&conn).unwrap();
+        let client = crate::repo::clients_upsert(
+            &conn,
+            crate::models::ClientWrite {
+                nom: "Alice".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let tarif =
+            crate::repo::tarifs_upsert(&conn, None, "Consultation", 60, 5000, true).unwrap();
+        let rdv1 = seed_rdv(&conn, &client.id, Some(tarif.id.clone()), "2026-10-15T09:00:00Z");
+        let rdv2 = seed_rdv(&conn, &client.id, Some(tarif.id.clone()), "2026-10-16T09:00:00Z");
+
+        assert!(honoraires_get_for_rdv(&conn, &rdv1.id).unwrap().is_none());
+
+        let dir = tempfile_dir();
+        let detail = honoraires_create(
+            &conn,
+            &cabinet_ok(),
+            std::slice::from_ref(&rdv1.id),
+            "especes",
+            &dir,
+        )
+        .unwrap();
+
+        let found = honoraires_get_for_rdv(&conn, &rdv1.id).unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().id, detail.honoraire.id);
+
+        assert!(honoraires_get_for_rdv(&conn, &rdv2.id).unwrap().is_none());
+
+        honoraires_annuler(&conn, &detail.honoraire.id, &dir).unwrap();
+        assert!(honoraires_get_for_rdv(&conn, &rdv1.id).unwrap().is_none());
     }
 }

@@ -740,6 +740,15 @@ pub fn honoraires_rdvs_disponibles(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub fn honoraires_get_for_rdv(
+    rdv_id: String,
+    db: tauri::State<'_, DbState>,
+) -> Result<Option<Honoraire>, String> {
+    db.with_conn(|conn| crate::honoraires::honoraires_get_for_rdv(conn, &rdv_id))
+        .map_err(|e| e.message)
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub fn app_close(window: tauri::Window) {
     use tauri::Manager;
     let app = window.app_handle().clone();
@@ -1524,5 +1533,8 @@ mod tests {
         let now = Utc.with_ymd_and_hms(2026, 9, 11, 8, 0, 0).unwrap();
         let dash = rdv_dashboard(&conn, now).unwrap();
         assert_eq!(dash.aujourdhui.len(), 1);
+        assert_eq!(dash.clients_count, 1);
+        assert_eq!(dash.tarifs_count, 0);
+        assert_eq!(dash.week_count, 1);
     }
 }

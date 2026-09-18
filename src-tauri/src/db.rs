@@ -249,8 +249,16 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
         CREATE INDEX IF NOT EXISTS idx_rdv_statut_debut ON rdv(statut, debut);
         CREATE INDEX IF NOT EXISTS idx_rdv_client ON rdv(client_id);
         CREATE INDEX IF NOT EXISTS idx_notes_client ON notes(client_id);
-        UPDATE rdv SET debut = strftime('%Y-%m-%dT%H:%M:%S+00:00', debut)
-        WHERE debut IS NOT NULL AND debut NOT LIKE '%+00:00';
+        UPDATE rdv
+        SET debut = strftime('%Y-%m-%dT%H:%M:%S+00:00', debut)
+        WHERE debut IS NOT NULL
+          AND strftime('%Y-%m-%dT%H:%M:%S+00:00', debut) IS NOT NULL
+          AND (length(debut) != 25 OR debut NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]+00:00');
+        UPDATE honoraire_lignes
+        SET debut = strftime('%Y-%m-%dT%H:%M:%S+00:00', debut)
+        WHERE debut IS NOT NULL
+          AND strftime('%Y-%m-%dT%H:%M:%S+00:00', debut) IS NOT NULL
+          AND (length(debut) != 25 OR debut NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]+00:00');
         ",
     )?;
     Ok(())
@@ -431,5 +439,56 @@ mod tests {
         assert!(names.contains(&"idx_rdv_statut_debut".to_string()));
         assert!(names.contains(&"idx_rdv_client".to_string()));
         assert!(names.contains(&"idx_notes_client".to_string()));
+    }
+
+    #[test]
+    fn migrate_canonicalise_dates_historiques() {
+        let conn = open_memory().unwrap();
+        conn.execute_batch(
+            r"
+            CREATE TABLE rdv (
+              id TEXT PRIMARY KEY,
+              client_id TEXT,
+              tarif_id TEXT,
+              debut TEXT NOT NULL,
+              duree_minutes INTEGER NOT NULL CHECK (duree_minutes > 0),
+              jitsi_url TEXT NOT NULL,
+              stripe_url TEXT,
+              stripe_id TEXT,
+              note TEXT,
+              statut TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            INSERT INTO rdv (id, debut, duree_minutes, jitsi_url, statut, created_at, updated_at)
+            VALUES
+              ('r1', '2026-09-11T10:00:00Z', 60, 'https://jitsi/1', 'planifie', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+              ('r2', '2026-09-11T12:00:00+02:00', 60, 'https://jitsi/2', 'planifie', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+              ('r3', '2026-09-11T14:30:00.000Z', 60, 'https://jitsi/3', 'planifie', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+              ('r4', '2026-09-11T16:00:00+00:00', 60, 'https://jitsi/4', 'planifie', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+              ('r5', '2026-09-11T18:00:00.000+00:00', 60, 'https://jitsi/5', 'planifie', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+            ",
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+
+        let mut stmt = conn.prepare("SELECT id, debut FROM rdv ORDER BY id").unwrap();
+        let rows: Vec<(String, String)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(
+            rows,
+            vec![
+                ("r1".to_string(), "2026-09-11T10:00:00+00:00".to_string()),
+                ("r2".to_string(), "2026-09-11T10:00:00+00:00".to_string()),
+                ("r3".to_string(), "2026-09-11T14:30:00+00:00".to_string()),
+                ("r4".to_string(), "2026-09-11T16:00:00+00:00".to_string()),
+                ("r5".to_string(), "2026-09-11T18:00:00+00:00".to_string()),
+            ]
+        );
     }
 }

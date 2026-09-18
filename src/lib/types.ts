@@ -61,7 +61,13 @@ export type RappelNtfy = {
 
 export type RdvDetail = { rdv: Rdv; rappels: RappelNtfy[] };
 
-export type Dashboard = { aujourdhui: Rdv[]; a_venir: Rdv[] };
+export type Dashboard = {
+	aujourdhui: Rdv[];
+	a_venir: Rdv[];
+	clients_count: number;
+	tarifs_count: number;
+	week_count: number;
+};
 
 export type Note = {
 	id: string;

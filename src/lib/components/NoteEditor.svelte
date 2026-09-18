@@ -3,7 +3,6 @@
 	import { Editor } from '@tiptap/core';
 	import StarterKit from '@tiptap/starter-kit';
 	import { TableKit } from '@tiptap/extension-table';
-	import Underline from '@tiptap/extension-underline';
 	import BoldIcon from '@lucide/svelte/icons/bold';
 	import ItalicIcon from '@lucide/svelte/icons/italic';
 	import UnderlineIcon from '@lucide/svelte/icons/underline';
@@ -68,7 +67,6 @@
 				StarterKit.configure({
 					link: { openOnClick: false }
 				}),
-				Underline,
 				TableKit.configure({
 					table: { resizable: false }
 				})

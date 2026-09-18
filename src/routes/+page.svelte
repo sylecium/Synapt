@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
-	import { clientsList, rdvDashboard, rdvList, settingsGet, tarifsList } from '$lib/api';
+	import { rdvDashboard, settingsGet } from '$lib/api';
 	import { nextRdv, remainingRdvs } from '$lib/dashboardStats';
 	import { userMessage } from '$lib/errors';
 	import type { Dashboard, Rdv, RdvCreateResult, SettingsPublic } from '$lib/types';
@@ -9,9 +9,7 @@
 		formatDateTime,
 		formatTime,
 		rdvClientLabel,
-		sameLocalDay,
-		startOfWeekMonday,
-		weekBoundsUtc
+		sameLocalDay
 	} from '$lib/format';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
@@ -60,19 +58,15 @@
 
 	async function reload() {
 		try {
-			const week = weekBoundsUtc(startOfWeekMonday(new Date()));
-			const [s, d, clients, tarifs, weekRdvs] = await Promise.all([
+			const [s, d] = await Promise.all([
 				settingsGet(),
-				rdvDashboard(),
-				clientsList(),
-				tarifsList(),
-				rdvList({ from: week.from, to: week.to })
+				rdvDashboard()
 			]);
 			settings = s;
 			dashboard = d;
-			clientsCount = clients.length;
-			tarifsCount = tarifs.length;
-			weekCount = weekRdvs.length;
+			clientsCount = d.clients_count;
+			tarifsCount = d.tarifs_count;
+			weekCount = d.week_count;
 			now = new Date();
 		} catch (e) {
 			toast.error(userMessage(e));
