@@ -2,6 +2,12 @@ import type { Note } from './types';
 
 const DELAY_MS = 400;
 
+const activeFlushes = new Set<() => Promise<void>>();
+
+export async function flushAllDebouncedNotes(): Promise<void> {
+	await Promise.all(Array.from(activeFlushes).map((flush) => flush().catch(() => {})));
+}
+
 export function createDebouncedNoteSave(opts: {
 	getNote: (id: string) => Note | undefined;
 	save: (note: Note) => Promise<Note>;
@@ -30,6 +36,8 @@ export function createDebouncedNoteSave(opts: {
 		}
 	}
 
+	activeFlushes.add(flush);
+
 	function schedule(note: Note) {
 		pendingId = note.id;
 		if (saveTimer) clearTimeout(saveTimer);
@@ -47,5 +55,9 @@ export function createDebouncedNoteSave(opts: {
 		pendingId = null;
 	}
 
-	return { flush, schedule, cancel };
+	function destroy() {
+		activeFlushes.delete(flush);
+	}
+
+	return { flush, schedule, cancel, destroy };
 }

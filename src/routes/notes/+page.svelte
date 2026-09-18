@@ -41,6 +41,7 @@
 	onMount(load);
 	onDestroy(() => {
 		void noteSave.flush();
+		noteSave.destroy();
 	});
 
 	async function load() {

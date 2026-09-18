@@ -445,42 +445,11 @@ pub async fn clients_delete(id: String, db: tauri::State<'_, DbState>) -> Result
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn clients_upsert(
-    id: Option<String>,
-    nom: String,
-    email: Option<String>,
-    telephone: Option<String>,
-    statut: Option<String>,
-    memo: Option<String>,
-    tarif_id: Option<String>,
-    date_naissance: Option<String>,
-    urgence_nom: Option<String>,
-    urgence_telephone: Option<String>,
-    orientation: Option<String>,
-    frequence: Option<String>,
-    adresse: Option<String>,
+    input: ClientWrite,
     db: tauri::State<'_, DbState>,
 ) -> Result<Client, String> {
-    db.with_conn(|conn| {
-        repo::clients_upsert(
-            conn,
-            ClientWrite {
-                id,
-                nom,
-                email,
-                telephone,
-                statut,
-                memo,
-                tarif_id,
-                date_naissance,
-                urgence_nom,
-                urgence_telephone,
-                orientation,
-                frequence,
-                adresse,
-            },
-        )
-    })
-    .map_err(|e| e.message)
+    db.with_conn(|conn| repo::clients_upsert(conn, input))
+        .map_err(|e| e.message)
 }
 
 #[tauri::command(rename_all = "snake_case")]

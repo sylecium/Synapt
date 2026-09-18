@@ -178,10 +178,11 @@ pub fn mask_secret(s: &str) -> (bool, String) {
     if s.is_empty() {
         return (false, String::new());
     }
-    let last4 = if s.len() <= 4 {
-        s.to_string()
+    let chars: Vec<char> = s.chars().collect();
+    let last4: String = if chars.len() <= 4 {
+        chars.into_iter().collect()
     } else {
-        s[s.len() - 4..].to_string()
+        chars[chars.len() - 4..].iter().collect()
     };
     (true, last4)
 }
@@ -195,5 +196,23 @@ mod tests {
         let (ok, last) = mask_secret("sk_test_abcdefghij");
         assert!(ok);
         assert_eq!(last, "ghij");
+    }
+
+    #[test]
+    fn mask_utf8_multibyte() {
+        let (ok, last) = mask_secret("secret_sécurisé");
+        assert!(ok);
+        assert_eq!(last, "risé");
+    }
+
+    #[test]
+    fn mask_short_or_empty() {
+        let (ok, last) = mask_secret("abc");
+        assert!(ok);
+        assert_eq!(last, "abc");
+
+        let (ok2, last2) = mask_secret("");
+        assert!(!ok2);
+        assert_eq!(last2, "");
     }
 }

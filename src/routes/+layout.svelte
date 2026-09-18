@@ -1,12 +1,35 @@
 <script lang="ts">
 	import '../app.css';
+	import { onMount } from 'svelte';
 	import { ModeWatcher } from 'mode-watcher';
 	import { Toaster } from '$lib/components/ui/sonner';
 	import * as Sidebar from '$lib/components/ui/sidebar/index.js';
 	import AppSidebar from '$lib/components/AppSidebar.svelte';
 	import UpdateBanner from '$lib/components/UpdateBanner.svelte';
+	import { flushAllDebouncedNotes } from '$lib/debouncedNoteSave';
 
 	let { children } = $props();
+
+	onMount(() => {
+		let unlisten: (() => void) | undefined;
+		(async () => {
+			try {
+				const { getCurrentWindow } = await import('@tauri-apps/api/window');
+				const win = getCurrentWindow();
+				unlisten = await win.onCloseRequested(async () => {
+					await Promise.race([
+						flushAllDebouncedNotes(),
+						new Promise((resolve) => setTimeout(resolve, 1500))
+					]);
+				});
+			} catch {
+				// Environnement hors Tauri (tests, ssr)
+			}
+		})();
+		return () => {
+			unlisten?.();
+		};
+	});
 </script>
 
 <ModeWatcher />

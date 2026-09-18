@@ -23,6 +23,7 @@ const COL_QTE: f32 = 114.0;
 const COL_HT: f32 = 128.0;
 const COL_TVA: f32 = 152.0;
 const COL_TTC: f32 = 172.0;
+const TOTALS_BLOCK_HEIGHT: f32 = 65.0;
 
 pub fn write_pdf(detail: &HonoraireDetail, dest: &Path) -> Result<(), AppError> {
     if let Some(parent) = dest.parent() {
@@ -268,7 +269,12 @@ fn render_pdf(detail: &HonoraireDetail) -> Result<Vec<u8>, AppError> {
         table_row(&mut b, ligne, ht, tva);
     }
     b.hline(b.y + 2.4);
-    b.gap(4.0);
+    if b.y < PAGE_BOTTOM + TOTALS_BLOCK_HEIGHT {
+        b.flush_page();
+        b.y = PAGE_TOP;
+    } else {
+        b.gap(4.0);
+    }
 
     b.emit_x(128.0, &regular, 10.0, "Total HT");
     b.emit_x(168.0, &regular, 10.0, &format_centimes(total_ht));
@@ -342,21 +348,32 @@ fn extra_mention(raw: &str) -> Option<&str> {
 
 fn wrap(s: &str, max: usize) -> Vec<String> {
     let mut lines = Vec::new();
-    let mut cur = String::new();
-    for word in s.split_whitespace() {
-        if !cur.is_empty() && cur.len() + 1 + word.len() > max {
-            lines.push(cur);
-            cur = String::new();
+    for raw_line in s.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let mut cur = String::new();
+        let mut cur_len = 0;
+        for word in trimmed.split_whitespace() {
+            let w_len = word.chars().count();
+            if !cur.is_empty() && cur_len + 1 + w_len > max {
+                lines.push(cur);
+                cur = String::new();
+                cur_len = 0;
+            }
+            if !cur.is_empty() {
+                cur.push(' ');
+                cur_len += 1;
+            }
+            cur.push_str(word);
+            cur_len += w_len;
         }
         if !cur.is_empty() {
-            cur.push(' ');
+            lines.push(cur);
         }
-        cur.push_str(word);
     }
-    if !cur.is_empty() {
-        lines.push(cur);
-    }
-    if lines.is_empty() {
+    if lines.is_empty() && !s.trim().is_empty() {
         lines.push(s.trim().to_string());
     }
     lines
@@ -581,5 +598,32 @@ mod tests {
     #[test]
     fn lettres_un_euro_un_centime() {
         assert_eq!(montant_en_lettres(101), "un euro et un centime");
+    }
+
+    #[test]
+    fn wrap_multiligne_preserve_les_lignes() {
+        let input = "12 rue des Lilas\nBâtiment B\n75011 Paris";
+        let wrapped = wrap(input, 40);
+        assert_eq!(
+            wrapped,
+            vec!["12 rue des Lilas", "Bâtiment B", "75011 Paris"]
+        );
+    }
+
+    #[test]
+    fn wrap_ligne_longue_decoupe_mots() {
+        let input = "Une première ligne très longue qui dépasse le maximum autorisé\nDeuxième ligne courte";
+        let wrapped = wrap(input, 25);
+        assert_eq!(wrapped[0], "Une première ligne très");
+        assert_eq!(wrapped[1], "longue qui dépasse le");
+        assert_eq!(wrapped[2], "maximum autorisé");
+        assert_eq!(wrapped[3], "Deuxième ligne courte");
+    }
+
+    #[test]
+    fn wrap_ignore_lignes_vides() {
+        let input = "Première ligne\n\n   \nDeuxième ligne";
+        let wrapped = wrap(input, 40);
+        assert_eq!(wrapped, vec!["Première ligne", "Deuxième ligne"]);
     }
 }

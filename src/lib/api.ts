@@ -46,7 +46,7 @@ export const clientsUpsert = (p: {
 	orientation?: string | null;
 	frequence?: string | null;
 	adresse?: string | null;
-}) => invoke<Client>('clients_upsert', p);
+}) => invoke<Client>('clients_upsert', { input: p });
 
 export const tarifsList = () => invoke<Tarif[]>('tarifs_list');
 

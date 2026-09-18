@@ -295,7 +295,7 @@ pub fn honoraires_ouvrir_path(
 ) -> Result<PathBuf, AppError> {
     let detail = honoraires_get(conn, id)?;
     let path = pdf_abs(pdf_root, &detail.honoraire.pdf_relatif);
-    if crate::honoraires_pdf::write_pdf(&detail, &path).is_err() {
+    if !path.is_file() && crate::honoraires_pdf::write_pdf(&detail, &path).is_err() {
         return Err(AppError::new("Le PDF n'a pas pu être ouvert."));
     }
     Ok(path)
@@ -828,6 +828,30 @@ mod tests {
     }
 
     #[test]
+    fn ouvrir_ne_regenere_pas_si_existant() {
+        let conn = crate::db::open_memory().unwrap();
+        crate::db::migrate(&conn).unwrap();
+        let client = crate::repo::clients_upsert(
+            &conn,
+            crate::models::ClientWrite {
+                nom: "Alice".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let rdv = seed_rdv(&conn, &client.id, None, "2026-09-11T10:00:00Z");
+        let dir = tempfile_dir();
+        let d = honoraires_create(&conn, &cabinet_ok(), &[rdv.id], "especes", &dir).unwrap();
+        let path = dir.join(&d.honoraire.pdf_relatif);
+        assert!(path.is_file());
+        std::fs::write(&path, b"SENTINEL_NON_ECRASE").unwrap();
+        let opened = honoraires_ouvrir_path(&conn, &d.honoraire.id, &dir).unwrap();
+        assert_eq!(opened, path);
+        let content = std::fs::read(&path).unwrap();
+        assert_eq!(content, b"SENTINEL_NON_ECRASE");
+    }
+
+    #[test]
     fn annuler_deux_fois() {
         let conn = crate::db::open_memory().unwrap();
         crate::db::migrate(&conn).unwrap();
@@ -845,5 +869,66 @@ mod tests {
         honoraires_annuler(&conn, &d.honoraire.id, &dir).unwrap();
         let err = honoraires_annuler(&conn, &d.honoraire.id, &dir).unwrap_err();
         assert_eq!(err.message, "Cette note est déjà annulée.");
+    }
+
+    #[test]
+    fn pdf_adresse_multiligne_preserve_les_lignes() {
+        let conn = crate::db::open_memory().unwrap();
+        crate::db::migrate(&conn).unwrap();
+        let client = crate::repo::clients_upsert(
+            &conn,
+            crate::models::ClientWrite {
+                nom: "Léa Martin".into(),
+                adresse: Some("12 rue des Lilas\nBâtiment B\n75011 Paris".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let rdv = seed_rdv(&conn, &client.id, None, "2026-09-11T10:00:00Z");
+        let mut cab = cabinet_ok();
+        cab.adresse = "1 avenue de la République\n33000 Bordeaux".into();
+        let dir = tempfile_dir();
+        let d = honoraires_create(&conn, &cab, &[rdv.id], "especes", &dir).unwrap();
+        let text = pdftotext(&dir.join(&d.honoraire.pdf_relatif));
+        assert!(text.contains("12 rue des Lilas"), "manque ligne 1 client: {text:?}");
+        assert!(text.contains("Bâtiment B"), "manque ligne 2 client: {text:?}");
+        assert!(text.contains("75011 Paris"), "manque ligne 3 client: {text:?}");
+        assert!(text.contains("1 avenue de la République"), "manque ligne 1 cabinet: {text:?}");
+        assert!(text.contains("33000 Bordeaux"), "manque ligne 2 cabinet: {text:?}");
+    }
+
+    #[test]
+    fn pdf_saut_page_totaux_multi_lignes() {
+        let conn = crate::db::open_memory().unwrap();
+        crate::db::migrate(&conn).unwrap();
+        let client = crate::repo::clients_upsert(
+            &conn,
+            crate::models::ClientWrite {
+                nom: "Léa Martin".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let tarif =
+            crate::repo::tarifs_upsert(&conn, None, "Consultation", 60, 5000, true).unwrap();
+        let mut rdv_ids = Vec::new();
+        for i in 0..33 {
+            let day = (i / 4) + 1;
+            let hour = 8 + (i % 4) * 2;
+            let iso = format!("2026-10-{day:02}T{hour:02}:00:00Z");
+            let rdv = seed_rdv(&conn, &client.id, Some(tarif.id.clone()), &iso);
+            rdv_ids.push(rdv.id);
+        }
+        let dir = tempfile_dir();
+        let d = honoraires_create(&conn, &cabinet_ok(), &rdv_ids, "cb", &dir).unwrap();
+        let text = pdftotext(&dir.join(&d.honoraire.pdf_relatif));
+        let pages: Vec<&str> = text.split('\x0c').collect();
+        let non_empty_pages: Vec<&str> = pages.into_iter().filter(|p| !p.trim().is_empty()).collect();
+        assert_eq!(non_empty_pages.len(), 2, "doit comporter exactement 2 pages: {text:?}");
+        let page2 = non_empty_pages[1];
+        assert!(page2.contains("Total HT"), "page 2 doit contenir les totaux: {page2:?}");
+        assert!(page2.contains("Total TTC"), "page 2 doit contenir Total TTC: {page2:?}");
+        assert!(page2.contains("Arrêtée la présente facture"), "page 2 doit contenir la mention légale: {page2:?}");
+        assert!(page2.contains("Pour acquit"), "page 2 doit contenir Pour acquit: {page2:?}");
     }
 }

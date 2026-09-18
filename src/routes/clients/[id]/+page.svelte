@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
@@ -88,6 +89,11 @@
 			cancelled = true;
 			void noteSave.flush();
 		};
+	});
+
+	onDestroy(() => {
+		void noteSave.flush();
+		noteSave.destroy();
 	});
 
 	async function load(id: string, isCancelled: () => boolean = () => false) {

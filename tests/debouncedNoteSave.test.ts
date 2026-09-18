@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'bun:test';
-import { createDebouncedNoteSave } from '../src/lib/debouncedNoteSave';
+import { createDebouncedNoteSave, flushAllDebouncedNotes } from '../src/lib/debouncedNoteSave';
 import type { Note } from '../src/lib/types';
 
 function note(id: string, corps = 'x'): Note {
@@ -17,6 +17,7 @@ describe('createDebouncedNoteSave', () => {
 		});
 		await saver.flush();
 		expect(save).not.toHaveBeenCalled();
+		saver.destroy();
 	});
 
 	test('flush immédiat persiste et met à jour updated_at', async () => {
@@ -34,6 +35,7 @@ describe('createDebouncedNoteSave', () => {
 		expect(save).toHaveBeenCalledTimes(1);
 		expect(n.updated_at).toBe('t2');
 		expect(onSaved).toHaveBeenCalledTimes(1);
+		saver.destroy();
 	});
 
 	test('cancel abandonne le pending', async () => {
@@ -48,6 +50,49 @@ describe('createDebouncedNoteSave', () => {
 		saver.schedule(n);
 		saver.cancel(n.id);
 		await saver.flush();
+		expect(save).not.toHaveBeenCalled();
+		saver.destroy();
+	});
+
+	test('flushAllDebouncedNotes persiste les notes actives en attente', async () => {
+		const n1 = note('1', 'note 1');
+		const n2 = note('2', 'note 2');
+		const save1 = mock(async (x: Note) => x);
+		const save2 = mock(async (x: Note) => x);
+		const saver1 = createDebouncedNoteSave({
+			getNote: (id) => (id === n1.id ? n1 : undefined),
+			save: save1,
+			onSaved: mock(() => {}),
+			onError: mock(() => {})
+		});
+		const saver2 = createDebouncedNoteSave({
+			getNote: (id) => (id === n2.id ? n2 : undefined),
+			save: save2,
+			onSaved: mock(() => {}),
+			onError: mock(() => {})
+		});
+		saver1.schedule(n1);
+		saver2.schedule(n2);
+		await flushAllDebouncedNotes();
+		expect(save1).toHaveBeenCalledTimes(1);
+		expect(save2).toHaveBeenCalledTimes(1);
+
+		saver1.destroy();
+		saver2.destroy();
+	});
+
+	test('destroy retire la note du registre global', async () => {
+		const n = note('3', 'note 3');
+		const save = mock(async (x: Note) => x);
+		const saver = createDebouncedNoteSave({
+			getNote: (id) => (id === n.id ? n : undefined),
+			save,
+			onSaved: mock(() => {}),
+			onError: mock(() => {})
+		});
+		saver.schedule(n);
+		saver.destroy();
+		await flushAllDebouncedNotes();
 		expect(save).not.toHaveBeenCalled();
 	});
 });

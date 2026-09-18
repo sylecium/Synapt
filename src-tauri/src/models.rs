@@ -19,7 +19,7 @@ pub struct Client {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ClientWrite {
     pub id: Option<String>,
     pub nom: String,
