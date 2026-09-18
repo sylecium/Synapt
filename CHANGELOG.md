@@ -13,6 +13,22 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 
 ---
 
+## [0.1.5] - 2026-09-18
+
+### Nouveautés
+- Tableaux dans les notes : ajout rapide de lignes et colonnes par boutons d'outils ou clic droit, redimensionnement direct à la souris et mémorisation durable des largeurs.
+- Raccourcis d'écriture et infobulles : formatage rapide (gras, italique, souligné, titres et listes) via les raccourcis clavier standards, avec rappel de la combinaison au survol de chaque bouton.
+
+### Améliorations
+- Réactivité et fluidité : affichage plus rapide du tableau de bord, de l'agenda et des listes de rendez-vous.
+- Arrière-plan et rappels : fiabilisation de la fermeture de l'application et de l'envoi des rappels de rendez-vous.
+
+### Corrections
+- Conflit de raccourci : la combinaison Ctrl+B applique désormais le texte en gras sans replier le menu latéral de l'application.
+- Notes d'honoraires : fiabilisation de la génération et de l'ouverture des documents PDF.
+
+---
+
 ## [0.1.4] - 2026-09-17
 
 ### Nouveautés
@@ -64,7 +80,8 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/)
 - Rappels et notifications discrètes vers mobile via ntfy.
 - Mises à jour automatiques de l'application au format paquet Debian (.deb).
 
-[Non publié]: https://github.com/sylecium/Synapt/compare/v0.1.4...HEAD
+[Non publié]: https://github.com/sylecium/Synapt/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/sylecium/Synapt/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/sylecium/Synapt/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/sylecium/Synapt/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/sylecium/Synapt/compare/v0.1.1...v0.1.2
