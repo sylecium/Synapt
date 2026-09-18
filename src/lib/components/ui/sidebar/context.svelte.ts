@@ -40,8 +40,18 @@ class SidebarState {
 		return this.#isMobile.current;
 	}
 
-	// Event handler to apply to the `<svelte:window>`
 	handleShortcutKeydown = (e: KeyboardEvent) => {
+		const target = e.target as HTMLElement | null;
+		if (
+			e.defaultPrevented ||
+			target?.isContentEditable ||
+			target?.tagName === "INPUT" ||
+			target?.tagName === "TEXTAREA" ||
+			target?.closest(".note-editor") ||
+			target?.closest("[contenteditable=\"true\"]")
+		) {
+			return;
+		}
 		if (e.key === SIDEBAR_KEYBOARD_SHORTCUT && (e.metaKey || e.ctrlKey)) {
 			e.preventDefault();
 			this.toggle();

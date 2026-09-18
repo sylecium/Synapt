@@ -25,6 +25,17 @@ describe('noteToEditorContent', () => {
 	test('vide devient un paragraphe vide', () => {
 		expect(noteToEditorContent('')).toBe('<p></p>');
 	});
+
+	test('préserve les balises et attributs de redimensionnement de tableau', () => {
+		const tableHtml =
+			'<table style="width: 320px;"><colgroup><col style="width: 120px;"><col style="width: 200px;"></colgroup><tbody><tr><th colwidth="120">Tête 1</th><th colwidth="200">Tête 2</th></tr><tr><td colwidth="120">A</td><td colwidth="200">B</td></tr></tbody></table>';
+		expect(noteToEditorContent(tableHtml)).toBe(tableHtml);
+	});
+
+	test('filtre les attributs non autorisés sur les tableaux', () => {
+		const malicious = '<table style="background: red;" onclick="alert(1)"><tr><td onerror="evil()">cell</td></tr></table>';
+		expect(noteToEditorContent(malicious)).toBe('<table><tr><td>cell</td></tr></table>');
+	});
 });
 
 describe('notePlainText / noteTitle / noteIsEmpty', () => {
